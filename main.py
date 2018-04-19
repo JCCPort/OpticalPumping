@@ -11,7 +11,6 @@ from uncertainties import ufloat
 set_style("whitegrid")
 plt.switch_backend('QT5Agg')
 mu_B = physical_constants['Bohr magneton']
-print(mu_B)
 
 
 def fullscreen():
@@ -50,7 +49,7 @@ def helmholtz(I, n, R):
     :param R: Radius of the coils.
     :return: Magnetic field strength at the midpoint between the two coils.
     """
-    return ((4 / 5) ** 3 / 2) * (mu_0 * n * I) / R
+    return ((4 / 5) ** (3 / 2)) * (mu_0 * n * I) / R
 
 
 def mag_field_comps(B_coil, B_parr, B_perp):
@@ -75,21 +74,21 @@ def zeeman(B_tot, g_f, delta_m):
     return g_f * delta_m * mu_B[0] * B_tot
 
 
-def freq_as_curr(I, n, R, B_parr, B_perp, g_f, delta_m):
+def freq_as_curr(I, n, R, B_parr_temp, B_perp_temp, g_f_temp, delta_m_temp):
     """
 
     :param I: Current going into the Helmholtz coils.
     :param n: Number of turns in the coils.
     :param R: Radius of the coils.
-    :param B_parr: Component of Earth's magnetic field parallel to B_coil.
-    :param B_perp: Component of Earth's magnetic field perpendicular to B_coil.
-    :param g_f: Landé g-factor.
-    :param delta_m: Change in z-axis component of hyperfine coupled angular momentum F.
+    :param B_parr_temp: Component of Earth's magnetic field parallel to B_coil.
+    :param B_perp_temp: Component of Earth's magnetic field perpendicular to B_coil.
+    :param g_f_temp: Landé g-factor.
+    :param delta_m_temp: Change in z-axis component of hyperfine coupled angular momentum F.
     :return: Frequency separation of Zeeman split levels.
     """
     B_coil_temp = helmholtz(I, n, R)
-    B_tot_temp = mag_field_comps(B_coil_temp, B_parr, B_perp)
-    shift = zeeman(B_tot_temp, g_f, delta_m)
+    B_tot_temp = mag_field_comps(B_coil_temp, B_parr_temp, B_perp_temp)
+    shift = zeeman(B_tot_temp, g_f_temp, delta_m_temp)
     return shift / h
 
 
@@ -99,26 +98,23 @@ def freq_as_curr_fitting():
     Curve fitting to find Landé g-factor and Earth's magnetic flux density.
     """
     data, filename = pick_dat(['f', 'I'], 'RDAT')
-    initial = [50, 0.5, 2e-5, 3e-5, 1, 2]
-    bounds = [[49.99, 0.1, 1000e-9, 1000e-9, -0.0004, -10], [50.01, 1, 105000e-8, 105000e-8, 2.1, 10]]
+    initial = 50, 0.5, 2e-5, 3e-5, -0.0004, 2
+    bounds = [[49.99, 0.1, 1000e-9, 1000e-9, -0.00045, -10], [50.01, 1, 105000e-8, 105000e-8, 2.1, 10]]
     uncerts = [100 for x in range(0, len(data))]
-    print(uncerts)
     popt, pcov = curve_fit(freq_as_curr, data['I'], data['f'], p0=initial, bounds=bounds, sigma=uncerts,
-                           absolute_sigma=True)
+                           absolute_sigma=True, method='trf')
     errors = np.diag(pcov)
-    print(popt)
-    print(errors)
     popu = [ufloat(popt[0], errors[0]), ufloat(popt[1], errors[1]), ufloat(popt[2], errors[2]),
             ufloat(popt[3], errors[3]), ufloat(popt[4], errors[4]), ufloat(popt[5], errors[5])]
     print('\n')
-    print('-----------------------------------------------')
+    print('-----------------------------------------------------')
     print('Number of turns: {:.2f}'.format(popu[0]))
     print('Radius of Helmholtz coils: {:.2f}'.format(popu[1]))
-    print("Earth's magnetic flux density (parr): {:.2e}".format(popu[2]))
-    print("Earth's magnetic flux density (perp): {:.2e}".format(popu[3]))
+    print("Earth's magnetic flux density (∥): {:.2e}".format(popu[2]))
+    print("Earth's magnetic flux density (⟂): {:.2e}".format(popu[3]))
     print('Landé g-factor: {:.2f}'.format(popu[4]))
     print('m_F separation: {:.2f}'.format(popu[5]))
-    print('-----------------------------------------------')
+    print('-----------------------------------------------------')
     print('\n')
     max_x = np.max(data['I'])
     max_y = np.max(data['f'])
