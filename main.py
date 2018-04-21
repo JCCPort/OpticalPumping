@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pandas import read_csv, read_hdf
 from scipy.constants import mu_0, physical_constants, h, m_e
+from scipy.odr import Model, RealData, ODR
 from scipy.optimize import curve_fit
 from seaborn import set_style
 from uncertainties import ufloat
@@ -167,4 +168,59 @@ def freq_as_curr_fitting():
     plt.show()
 
 
-freq_as_curr_fitting()
+def vectorized_freq_as_curr(P, I):
+    """
+    :param I:
+    :param P: Vectorized Parameters.
+            P[0]: Hyperfine Landé g-factor.
+            P[1]: Earth's magnetic flux density component parallel to Helmholtz coil field.
+            P[2]: Earth's magnetic flux density component perpendicular to Helmholtz coil field.
+    :return:
+    """
+    delta_m = 1.0
+    R = 0.31
+    return (P[0] * mu_B[0] * delta_m / h) * np.sqrt(
+        ((8.0 / (np.sqrt(125.0))) * ((mu_0 * 50.0 * I) / R) + P[1]) ** 2 + P[2] ** 2)
+
+
+def vectorized_freq_as_curr_fitting():
+    """
+    Curve fitting to find Landé g-factor and Earth's magnetic flux density.
+    """
+    data, filename = pick_dat(['f', 'I', 'f_uncert', 'I_uncert'], 'RDAT')
+    model = Model(vectorized_freq_as_curr)
+    mydata = RealData(x=data['I'], y=data['f'], sx=data['I_uncert'], sy=data['f_uncert'])
+    myodr = ODR(mydata, model, beta0=[0.25, 2.e-5, 3.e-5], maxit=10000, sstol=0.000000001)
+    myoutput = myodr.run()
+    myoutput.pprint()
+    opt_vals = myoutput.beta
+    opt_errs = myoutput.sd_beta
+    popu = [ufloat(opt_vals[0], opt_errs[0]), ufloat(opt_vals[1] * 10000, opt_errs[1] * 10000),
+            ufloat(opt_vals[2] * 10000,
+                   opt_errs[2] * 10000)]
+    print('\n')
+    print('-------------------------------------------------------------------')
+    print('\tLandé g-factor: \t \t \t \t \t {:.6f}'.format(popu[0]))
+    print("\tEarth's magnetic flux density (∥): \t {:.6f} G".format(popu[1]))
+    print("\tEarth's magnetic flux density (⟂): \t {:.6f} G".format(popu[2]))
+    print('-------------------------------------------------------------------')
+    print('\n')
+    max_x = np.max(data['I'])
+    max_y = np.max(data['f'])
+    plot_vals = np.linspace(-max_x, max_x, 1000)
+    fig, ax = plt.subplots()
+    ax.axhline(y=0, color='k', alpha=0.5)
+    ax.axvline(x=0, color='k', alpha=0.5)
+    plt.xlabel('Current (A)')
+    plt.ylabel('Frequency (Hz)')
+    plt.title('Hyperfine energy splitting as a function of Helmholtz coil current')
+    figure2, = ax.plot(data['I'], data['f'], 'x', ms=15, mew=1.5, antialiased=True)
+    ax.plot(plot_vals, vectorized_freq_as_curr(I=plot_vals, P=myoutput.beta), antialiased=True, lw=3)
+    Sel = RangeTool(data['I'], data['f'], figure2, ax, 'Thing')
+    plt.xlim((-max_x * 1.15, max_x * 1.15))
+    plt.ylim((0, max_y * 1.15))
+    fullscreen()
+    plt.show()
+
+
+vectorized_freq_as_curr_fitting()
