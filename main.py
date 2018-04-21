@@ -3,7 +3,7 @@ from tkinter import filedialog, Tk
 import matplotlib.pyplot as plt
 import numpy as np
 from pandas import read_csv, read_hdf
-from scipy.constants import mu_0, physical_constants, h
+from scipy.constants import mu_0, physical_constants, h, m_e
 from scipy.optimize import curve_fit
 from seaborn import set_style
 from uncertainties import ufloat
@@ -11,8 +11,43 @@ from uncertainties import ufloat
 from range_selector import RangeTool
 
 set_style("whitegrid")
+# set_palette(["#9b59b6", "#3498db", "#95a5a6", "#e74c3c", "#34495e", "#2ecc71"])
 plt.switch_backend('QT5Agg')
 mu_B = physical_constants['Bohr magneton']
+electron_g = physical_constants['electron g factor']
+
+
+def electron_lande(J, S, L, gL=1 - (m_e / 2.2069468e-25), gS=electron_g[0]):
+    """
+
+    :param J: Total angular momentum of electron.
+    :param S: Spin angular momentum of electron.
+    :param L: Orbital angular momentum of electron.
+    :param gL: Electron orbital g-factor.
+    :param gS: Electron spin g-factor.
+    :return gJ: Landé g-factor.
+    """
+    term1 = gL * ((J * (J + 1) - S * (S + 1) + L * (L + 1)) / (2 * J * (J + 1)))
+    term2 = gS * ((J * (J + 1) + S * (S + 1) - L * (L + 1)) / (2 * J * (J + 1)))
+    return term1 + term2
+
+
+def hyperfine_lande(F, I, J, gJ, gI=-0.00039885395):
+    """
+
+    :param F: Coupled nuclear and total electron angular momentum.
+    :param I: Nuclear spin.
+    :param J: Total angular momentum of electron.
+    :param gJ: Landé g-factor.
+    :param gI: Nuclear g-factor.
+    :return gF: Hyperfine Landé g-factor.
+    """
+    term1 = gJ * ((F * (F + 1) - I * (I + 1) + J * (J + 1)) / (2 * F * (F + 1)))
+    term2 = gI * ((F * (F + 1) + I * (I + 1) - J * (J + 1)) / (2 * F * (F + 1)))
+    return term1 + term2
+
+
+print(hyperfine_lande(F=3, I=7 / 2, J=1 / 2, gJ=electron_lande(J=1 / 2, S=1 / 2, L=0)))
 
 
 def fullscreen():
@@ -51,7 +86,7 @@ def helmholtz(I, R):
     :param R: Radius of the coils.
     :return: Magnetic field strength at the midpoint between the two coils.
     """
-    return ((4 / 5) ** (3 / 2)) * (mu_0 * 50 * I) / R
+    return (8 / (125 ** (1 / 2))) * (mu_0 * 50 * I) / R
 
 
 # TODO: Consider posibility of adjusting Pythargoras' theorem to a 3D form.
@@ -98,18 +133,19 @@ def freq_as_curr_fitting():
     Curve fitting to find Landé g-factor and Earth's magnetic flux density.
     """
     data, filename = pick_dat(['f', 'I'], 'RDAT')
-    initial = 2e-5, 3e-5, -0.0004
-    bounds = [[0.1e-5, 0.1e-5, -0.00045], [105e-5, 105e-5, 2.2]]
-    uncerts = [1000 for x in range(0, len(data))]
+    initial = 2e-5, 3e-5, 0.1
+    bounds = [[1e-5, 1e-5, 0], [15e-5, 15e-5, 1]]
+    uncerts = [10000 for x in range(0, len(data))]
     popt, pcov = curve_fit(freq_as_curr, data['I'], data['f'], p0=initial, bounds=bounds, sigma=uncerts,
                            absolute_sigma=True, method='trf')
     errors = np.diag(pcov)
-    popu = [ufloat(popt[0], errors[0]), ufloat(popt[1], errors[1]), ufloat(popt[2], errors[2])]
-    print(pcov)
+    popu = [ufloat(popt[0] * 10000, errors[0] * 10000), ufloat(popt[1] * 10000, errors[1] * 10000),
+            ufloat(popt[2], errors[2])]
+    # print(pcov)
     print('\n')
     print('-------------------------------------------------------------------')
-    print("\tEarth's magnetic flux density (∥): \t {:.6e}".format(popu[0]))
-    print("\tEarth's magnetic flux density (⟂): \t {:.6e}".format(popu[1]))
+    print("\tEarth's magnetic flux density (∥): \t {:.6f} G".format(popu[0]))
+    print("\tEarth's magnetic flux density (⟂): \t {:.6f} G".format(popu[1]))
     print('\tLandé g-factor: \t \t \t \t \t {:.6f}'.format(popu[2]))
     print('-------------------------------------------------------------------')
     print('\n')
@@ -117,15 +153,16 @@ def freq_as_curr_fitting():
     max_y = np.max(data['f'])
     plot_vals = np.linspace(-max_x, max_x, 1000)
     fig, ax = plt.subplots()
-    plt.xlim([-max_x * 1.05, max_x * 1.05])
-    plt.ylim([-max_x * 1.05, max_y * 1.05])
+    ax.axhline(y=0, color='k', alpha=0.5)
+    ax.axvline(x=0, color='k', alpha=0.5)
     plt.xlabel('Current (A)')
     plt.ylabel('Frequency (Hz)')
     plt.title('Hyperfine energy splitting as a function of Helmholtz coil current')
-    figure2, = ax.plot(data['I'], data['f'], 'x', ms=10, antialiased=True)
-    # ax.plot(data['I'], freq_as_curr(data['I'], *popt), antialiased=True)
-    ax.plot(plot_vals, freq_as_curr(plot_vals, *popt), antialiased=True)
+    figure2, = ax.plot(data['I'], data['f'], 'x', ms=15, mew=1.5, antialiased=True)
+    ax.plot(plot_vals, freq_as_curr(plot_vals, *popt), antialiased=True, lw=3)
     Sel = RangeTool(data['I'], data['f'], figure2, ax, 'Thing')
+    plt.xlim((-max_x * 1.15, max_x * 1.15))
+    plt.ylim((0, max_y * 1.15))
     fullscreen()
     plt.show()
 
