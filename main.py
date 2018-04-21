@@ -1,9 +1,10 @@
+from time import time
 from tkinter import filedialog, Tk
 
 import matplotlib.pyplot as plt
 import numpy as np
 from pandas import read_csv, read_hdf
-from scipy.constants import mu_0, physical_constants, h, m_e
+from scipy.constants import mu_0, physical_constants, h
 from scipy.odr import Model, RealData, ODR
 from scipy.optimize import curve_fit
 from seaborn import set_style
@@ -11,14 +12,21 @@ from uncertainties import ufloat
 
 from range_selector import RangeTool
 
+today = time()
 set_style("whitegrid")
 # set_palette(["#9b59b6", "#3498db", "#95a5a6", "#e74c3c", "#34495e", "#2ecc71"])
 plt.switch_backend('QT5Agg')
 mu_B = physical_constants['Bohr magneton']
 electron_g = physical_constants['electron g factor']
+m_e = physical_constants['electron mass']
+print(m_e)
+m_cs = [2.2069468e-25, 3.3210778e-34]
+g_I = [-0.00039885395, 0.0000000000052]
+lab_field_NOAA = [48585.7 * 0.00001, 152 * 0.00001]
+formatted_NOAA = ufloat(lab_field_NOAA[0], lab_field_NOAA[1])
 
 
-def electron_lande(J, S, L, gL=1 - (m_e / 2.2069468e-25), gS=electron_g[0]):
+def electron_lande(J, S, L, gL=1 - (m_e[0] / m_cs[0]), gS=electron_g[0]):
     """
 
     :param J: Total angular momentum of electron.
@@ -33,7 +41,7 @@ def electron_lande(J, S, L, gL=1 - (m_e / 2.2069468e-25), gS=electron_g[0]):
     return term1 + term2
 
 
-def hyperfine_lande(F, I, J, gJ, gI=-0.00039885395):
+def hyperfine_lande(F, I, J, gJ, gI=g_I[0]):
     """
 
     :param F: Coupled nuclear and total electron angular momentum.
@@ -48,7 +56,21 @@ def hyperfine_lande(F, I, J, gJ, gI=-0.00039885395):
     return term1 + term2
 
 
-print(hyperfine_lande(F=3, I=7 / 2, J=1 / 2, gJ=electron_lande(J=1 / 2, S=1 / 2, L=0)))
+def hyperfine_lande_uncert(F, I, J, S, L):
+    term1 = (((J * (J + 1) - S * (S + 1) + L * (L + 1)) / (2 * J * (J + 1))) * (m_e[2] / m_cs[0])) ** 2
+    term2 = (((J * (J + 1) - S * (S + 1) + L * (L + 1)) / (2 * J * (J + 1))) * (m_cs[1] * m_e[0] / m_cs[0] ** 2)) ** 2
+    term3 = (((J * (J + 1) + S * (S + 1) - L * (L + 1)) / (2 * J * (J + 1))) * electron_g[2]) ** 2
+    term4 = (((F * (F + 1) + I * (I + 1) - J * (J + 1)) / (2 * F * (F + 1))) * g_I[1]) ** 2
+    return np.sqrt(term1 + term2 + term3 + term4)
+
+
+gF3 = [hyperfine_lande(F=3, I=7 / 2, J=1 / 2, gJ=electron_lande(J=1 / 2, S=1 / 2, L=0)),
+       hyperfine_lande_uncert(F=3, I=7 / 2, J=1 / 2, S=1 / 2, L=0)]
+print(hyperfine_lande_uncert(F=3, I=7 / 2, J=1 / 2, S=1 / 2, L=0))
+gF2 = [hyperfine_lande(F=2, I=7 / 2, J=1 / 2, gJ=electron_lande(J=1 / 2, S=1 / 2, L=0)),
+       hyperfine_lande_uncert(F=2, I=7 / 2, J=1 / 2, S=1 / 2, L=0)]
+formatted_gf3 = ufloat(gF3[0], gF3[1])
+formatted_gf2 = ufloat(gF2[0], gF3[1])
 
 
 def fullscreen():
@@ -128,46 +150,6 @@ def freq_as_curr(I, B_parr_temp, B_perp_temp, g_f_temp):
     return shift / h
 
 
-# TODO: Improve uncertainties.
-def freq_as_curr_fitting():
-    """
-    Curve fitting to find Landé g-factor and Earth's magnetic flux density.
-    """
-    data, filename = pick_dat(['f', 'I'], 'RDAT')
-    initial = 2e-5, 3e-5, 0.1
-    bounds = [[1e-5, 1e-5, 0], [15e-5, 15e-5, 1]]
-    uncerts = [10000 for x in range(0, len(data))]
-    popt, pcov = curve_fit(freq_as_curr, data['I'], data['f'], p0=initial, bounds=bounds, sigma=uncerts,
-                           absolute_sigma=True, method='trf')
-    errors = np.diag(pcov)
-    popu = [ufloat(popt[0] * 10000, errors[0] * 10000), ufloat(popt[1] * 10000, errors[1] * 10000),
-            ufloat(popt[2], errors[2])]
-    # print(pcov)
-    print('\n')
-    print('-------------------------------------------------------------------')
-    print("\tEarth's magnetic flux density (∥): \t {:.6f} G".format(popu[0]))
-    print("\tEarth's magnetic flux density (⟂): \t {:.6f} G".format(popu[1]))
-    print('\tLandé g-factor: \t \t \t \t \t {:.6f}'.format(popu[2]))
-    print('-------------------------------------------------------------------')
-    print('\n')
-    max_x = np.max(data['I'])
-    max_y = np.max(data['f'])
-    plot_vals = np.linspace(-max_x, max_x, 1000)
-    fig, ax = plt.subplots()
-    ax.axhline(y=0, color='k', alpha=0.5)
-    ax.axvline(x=0, color='k', alpha=0.5)
-    plt.xlabel('Current (A)')
-    plt.ylabel('Frequency (Hz)')
-    plt.title('Hyperfine energy splitting as a function of Helmholtz coil current')
-    figure2, = ax.plot(data['I'], data['f'], 'x', ms=15, mew=1.5, antialiased=True)
-    ax.plot(plot_vals, freq_as_curr(plot_vals, *popt), antialiased=True, lw=3)
-    Sel = RangeTool(data['I'], data['f'], figure2, ax, 'Thing')
-    plt.xlim((-max_x * 1.15, max_x * 1.15))
-    plt.ylim((0, max_y * 1.15))
-    fullscreen()
-    plt.show()
-
-
 def vectorized_freq_as_curr(P, I):
     """
     :param I:
@@ -180,34 +162,106 @@ def vectorized_freq_as_curr(P, I):
     delta_m = 1.0
     R = 0.31
     return (P[0] * mu_B[0] * delta_m / h) * np.sqrt(
-        ((8.0 / (np.sqrt(125.0))) * ((mu_0 * 50.0 * I) / R) + P[1]) ** 2 + P[2] ** 2)
+            ((8.0 / (np.sqrt(125.0))) * ((mu_0 * 50.0 * I) / R) + P[1]) ** 2 + P[2] ** 2)
 
 
-def vectorized_freq_as_curr_fitting():
+# TODO: Improve uncertainties.
+def freq_as_curr_fitting():
     """
     Curve fitting to find Landé g-factor and Earth's magnetic flux density.
     """
     data, filename = pick_dat(['f', 'I', 'f_uncert', 'I_uncert'], 'RDAT')
+    initial = 2e-5, 3e-5, 0.1
+    bounds = [[1e-5, 1e-5, 0], [15e-5, 15e-5, 1]]
+    uncerts = [10000 for x in range(0, len(data))]
+    popt, pcov = curve_fit(freq_as_curr, data['I'], data['f'], p0=initial, bounds=bounds, sigma=uncerts,
+                           absolute_sigma=True, method='trf')
+    errors = np.diag(pcov)
+    popu = [ufloat(popt[0] * 10000, errors[0] * 10000), ufloat(popt[1] * 10000, errors[1] * 10000),
+            ufloat(popt[2], errors[2])]
+    chisq = np.sum(((data['f'] - freq_as_curr(data['I'], *popt)) ** 2) / data['f'])
+    net_mag = np.sqrt((popt[0] * 10000) ** 2 + (popt[1] * 10000) ** 2)
+    net_mag_err = np.sqrt(((popt[0] * errors[0] * 100000000) ** 2 / ((popt[0] * 10000) ** 2 + (popt[1] * 10000) ** 2)) +
+                          ((popt[1] * errors[1] * 100000000) ** 2 / ((popt[0] * 10000) ** 2 + (popt[1] * 10000) ** 2)))
+    popu_calc = [ufloat(net_mag, net_mag_err)]
+    print('\n')
+    print('-------------------------------------------------------------------')
+    print("\tEarth's magnetic flux density (∥): \t \t {:.6f} G".format(popu[0]))
+    print("\tEarth's magnetic flux density (⟂): \t \t {:.6f} G".format(popu[1]))
+    print('\n')
+    print("\tEarth's magnetic flux density: \t \t \t {:.6f} G".format(popu_calc[0]))
+    print("\tNOAA Earth's magnetic flux density: \t {:.6f} G".format(formatted_NOAA))
+
+    print('\n')
+    print('\tLandé g-factor: \t \t \t \t \t \t {:.6f}'.format(popu[2]))
+    print('\tCalculated Landé g-factor: \t \t \t \t {:.6f}'.format(formatted_gf3))
+
+    print('\n')
+    print('\tReduced chi-sq: \t \t \t \t \t \t {:.2f}'.format(chisq / (len(data['I']) - len(popt))))
+    print('-------------------------------------------------------------------')
+    print('\n')
+    max_x = np.max(data['I'])
+    max_y = np.max(data['f'])
+    plot_vals = np.linspace(float(-max_x), max_x, 1000)
+    fig, ax = plt.subplots()
+    ax.axhline(y=0, color='k', alpha=0.5)
+    ax.axvline(x=0, color='k', alpha=0.5)
+    plt.xlabel('Current (A)')
+    plt.ylabel('Frequency (Hz)')
+    plt.title('Hyperfine energy splitting as a function of Helmholtz coil current')
+    figure2, = ax.plot(data['I'], data['f'], 'x', ms=15, mew=1.5, antialiased=True)
+    ax.plot(plot_vals, freq_as_curr(plot_vals, *popt), antialiased=True, lw=3)
+    Sel = RangeTool(data['I'], data['f'], figure2, ax, 'Thing')
+    plt.xlim((-max_x * 1.15, max_x * 1.15))
+    plt.ylim((0, max_y * 1.15))
+    fullscreen()
+    plt.savefig("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\FreqAsCurr_{}.png".format(
+            today), dpi=400)
+    plt.show()
+
+
+def vectorized_freq_as_curr_fitting():
+    """
+    Non-linear curve fitting using the vectorized function (that allows for both x and y uncertainty to be
+    compensated for) to find Landé g-factor and Earth's magnetic flux density.
+    """
+    data, filename = pick_dat(['f', 'I', 'f_uncert', 'I_uncert'], 'RDAT')
     model = Model(vectorized_freq_as_curr)
     mydata = RealData(x=data['I'], y=data['f'], sx=data['I_uncert'], sy=data['f_uncert'])
-    myodr = ODR(mydata, model, beta0=[0.25, 2.e-5, 3.e-5], maxit=10000, sstol=0.000000001)
+    myodr = ODR(mydata, model, beta0=[0.25, 2.e-5, 3.e-5], maxit=10000)
     myoutput = myodr.run()
-    myoutput.pprint()
     opt_vals = myoutput.beta
     opt_errs = myoutput.sd_beta
     popu = [ufloat(opt_vals[0], opt_errs[0]), ufloat(opt_vals[1] * 10000, opt_errs[1] * 10000),
             ufloat(opt_vals[2] * 10000,
                    opt_errs[2] * 10000)]
+    net_mag = np.sqrt((opt_vals[1] * 10000) ** 2 + (opt_vals[2] * 10000) ** 2)
+    net_mag_err = np.sqrt(
+            ((opt_vals[1] * opt_errs[1] * 100000000) ** 2 / ((opt_vals[1] * 10000) ** 2 + (opt_vals[2] * 10000) ** 2)) +
+            ((opt_vals[2] * opt_errs[2] * 100000000) ** 2 / ((opt_vals[1] * 10000) ** 2 + (opt_vals[2] * 10000) ** 2)))
+    popu_calc = [ufloat(net_mag, net_mag_err)]
+    mag_flux_overlap = (abs(popu_calc[0].n - formatted_NOAA.n) / (popu_calc
+                                                                  [0].std_dev + formatted_NOAA.std_dev))
+    lande_overlap = (abs(popu[0].n - formatted_gf3.n) / (popu[0].std_dev + formatted_gf3.std_dev))
     print('\n')
     print('-------------------------------------------------------------------')
-    print('\tLandé g-factor: \t \t \t \t \t {:.6f}'.format(popu[0]))
-    print("\tEarth's magnetic flux density (∥): \t {:.6f} G".format(popu[1]))
-    print("\tEarth's magnetic flux density (⟂): \t {:.6f} G".format(popu[2]))
+    print("\tEarth's magnetic flux density (∥): \t \t {:.4f} G".format(popu[1]))
+    print("\tEarth's magnetic flux density (⟂): \t \t {:.4f} G".format(popu[2]))
+    print('\n')
+    print("\tEarth's magnetic flux density: \t \t \t {:.4f} G".format(popu_calc[0]))
+    print("\tNOAA Earth's magnetic flux density: \t {:.4f} G".format(formatted_NOAA))
+    print('\tStd. Dev. Separation: \t \t \t \t \t {:.2f}'.format(mag_flux_overlap))
+    print('\n')
+    print('\tLandé g-factor: \t \t \t \t \t \t {:.4f}'.format(popu[0]))
+    print('\tCalculated Landé g-factor: \t \t \t \t {:.4f}'.format(formatted_gf3))
+    print('\tStd. Dev. Separation: \t \t \t \t \t {:.2f}'.format(lande_overlap))
+    print('\n')
+    print('\tReduced chi-sq: \t \t \t \t \t \t {:.2f}'.format(myoutput.res_var / (len(data['I']) - len(opt_vals))))
     print('-------------------------------------------------------------------')
     print('\n')
     max_x = np.max(data['I'])
     max_y = np.max(data['f'])
-    plot_vals = np.linspace(-max_x, max_x, 1000)
+    plot_vals = np.linspace(float(-max_x), max_x, 1000)
     fig, ax = plt.subplots()
     ax.axhline(y=0, color='k', alpha=0.5)
     ax.axvline(x=0, color='k', alpha=0.5)
@@ -220,7 +274,10 @@ def vectorized_freq_as_curr_fitting():
     plt.xlim((-max_x * 1.15, max_x * 1.15))
     plt.ylim((0, max_y * 1.15))
     fullscreen()
+    plt.savefig("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\VectorizedFreqAsCurr_{}.png".format(
+            today), dpi=400)
     plt.show()
 
 
 vectorized_freq_as_curr_fitting()
+freq_as_curr_fitting()
