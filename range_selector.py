@@ -130,14 +130,14 @@ class RangeTool:
     def finishplot(self, event):
         self.Ranges.astype('float32')
         if event.key == 'enter':
-            chdir('C:\\Users\Josh\IdeaProjects\PulsedNMR\Ranges')
+            chdir('C:\\Users\Josh\IdeaProjects\OpticalPumping\Sweep_ranges')
             # Check this isn't writing headers.
-            self.Ranges.to_csv('{}'.format(self.key), index=False, encoding='utf-8', columns=['Lower Bound',
+            self.Ranges.to_csv('{}.csv'.format(self.key), index=False, encoding='utf-8', columns=['Lower Bound',
                                                                                               'LowerIndex',
                                                                                               'Upper Bound',
                                                                                               'UpperIndex'],
                                header=None)
             plt.close()
-            chdir('C:\\Users\Josh\IdeaProjects\PulsedNMR')
+            chdir('C:\\Users\Josh\IdeaProjects\OpticalPumping\Sweep_ranges')
         elif event.key == 'escape':
             plt.close()

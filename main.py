@@ -1,20 +1,22 @@
-from time import time
+from time import gmtime, strftime
 from tkinter import filedialog, Tk
 
 import matplotlib.pyplot as plt
 import numpy as np
-from pandas import read_csv, read_hdf
+from lmfit.models import GaussianModel, LinearModel
+from pandas import read_csv, read_hdf, DataFrame
 from scipy.constants import mu_0, physical_constants, h
 from scipy.odr import Model, RealData, ODR
 from scipy.optimize import curve_fit
+from scipy.signal import savgol_filter
 from seaborn import set_style
 from uncertainties import ufloat
 
 from range_selector import RangeTool
 
-today = time()
+today = strftime("%Y-%m-%d_%H-%M-%S", gmtime())
 set_style("whitegrid")
-# set_palette(["#9b59b6", "#3498db", "#95a5a6", "#e74c3c", "#34495e", "#2ecc71"])
+# set_palette("Set1")
 plt.switch_backend('QT5Agg')
 mu_B = physical_constants['Bohr magneton']
 electron_g = physical_constants['electron g factor']
@@ -72,6 +74,8 @@ gF2 = [hyperfine_lande(F=2, I=7 / 2, J=1 / 2, gJ=electron_lande(J=1 / 2, S=1 / 2
 formatted_gf3 = ufloat(gF3[0], gF3[1])
 formatted_gf2 = ufloat(gF2[0], gF3[1])
 
+print(hyperfine_lande(F=4, I=7 / 2, J=1 / 2, gJ=electron_lande(J=1 / 2, S=1 / 2, L=0)))
+
 
 def fullscreen():
     fig_manager = plt.get_current_fig_manager()
@@ -99,6 +103,34 @@ def pick_dat(cols, initdir='RDAT', title="Select file"):
         return data, filename_parts
     else:
         print('Unexpected file type. Choose either a .csv or .h5 file.')
+
+
+def range_to_list(smooth=False):
+    """
+    This function is used to create an array of values from a dataset that's limits are given by a list lower and
+    upper limits. THIS IS CONFIGURED FOR MY COMPUTER, CHANGE THE DIRECTORY TO USE.
+    """
+    dat1, filename1 = pick_dat(['t', 'm'], "Sweep_dat", "Select dataset to draw from")
+    dat2 = read_csv("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\Sweep_ranges\\{}".format(filename1),
+                    names=['Lower Bound', 'LowerIndex', 'Upper Bound', 'UpperIndex'])
+    if smooth:
+        win_len = int(len(dat1) / 10)
+        if win_len % 2 == 0:
+            win_len += 1
+        dat1['m'] = savgol_filter(dat1['m'], win_len, 1)
+    xrange = []
+    yrange = []
+    xranges = {}
+    yranges = {}
+    x_append = xrange.append
+    y_append = yrange.append
+    for o in range(0, len(dat2)):
+        x_append((dat1['t'][dat2['LowerIndex'][o]:dat2['UpperIndex'][o] + 1]).values)
+        y_append((dat1['m'][dat2['LowerIndex'][o]:dat2['UpperIndex'][o] + 1]).values)
+    for o in range(0, len(xrange)):
+        xranges[o] = xrange[o]
+        yranges[o] = yrange[o]
+    return xranges, yranges, xrange, yrange, filename1, dat1
 
 
 def helmholtz(I, R):
@@ -209,14 +241,16 @@ def freq_as_curr_fitting():
     plt.xlabel('Current (A)')
     plt.ylabel('Frequency (Hz)')
     plt.title('Hyperfine energy splitting as a function of Helmholtz coil current')
-    figure2, = ax.plot(data['I'], data['f'], 'x', ms=15, mew=1.5, antialiased=True)
-    ax.plot(plot_vals, freq_as_curr(plot_vals, *popt), antialiased=True, lw=3)
+    figure2, = ax.plot(data['I'], data['f'], 'o', markerfacecolor="None", color='#050505',
+                       mew=1.4, ms=7, antialiased=True, label='Data')
+    ax.plot(plot_vals, freq_as_curr(plot_vals, *popt), antialiased=True, lw=2.5, label='TRF Fit', color='k')
     Sel = RangeTool(data['I'], data['f'], figure2, ax, 'Thing')
     plt.xlim((-max_x * 1.15, max_x * 1.15))
     plt.ylim((0, max_y * 1.15))
     fullscreen()
+    plt.legend()
     plt.savefig("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\FreqAsCurr_{}.png".format(
-            today), dpi=400)
+            today), dpi=600)
     plt.show()
 
 
@@ -268,16 +302,151 @@ def vectorized_freq_as_curr_fitting():
     plt.xlabel('Current (A)')
     plt.ylabel('Frequency (Hz)')
     plt.title('Hyperfine energy splitting as a function of Helmholtz coil current')
-    figure2, = ax.plot(data['I'], data['f'], 'x', ms=15, mew=1.5, antialiased=True)
-    ax.plot(plot_vals, vectorized_freq_as_curr(I=plot_vals, P=myoutput.beta), antialiased=True, lw=3)
+    figure2, = ax.plot(data['I'], data['f'], 'o', markerfacecolor="None", color='#050505',
+                       mew=1.4, ms=7, antialiased=True, label='Data')
+    ax.plot(plot_vals, vectorized_freq_as_curr(I=plot_vals, P=myoutput.beta), antialiased=True, lw=2.5, label='ODR Fit',
+            color='k')
     Sel = RangeTool(data['I'], data['f'], figure2, ax, 'Thing')
     plt.xlim((-max_x * 1.15, max_x * 1.15))
     plt.ylim((0, max_y * 1.15))
     fullscreen()
+    plt.legend()
     plt.savefig("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\VectorizedFreqAsCurr_{}.png".format(
-            today), dpi=400)
+            today), dpi=600)
     plt.show()
 
 
+def read_scan():
+    data, filename = pick_dat(['f', 'RT'], 'Sweep_dat')
+    fig, ax = plt.subplots()
+    figure1, = ax.plot(data['f'], data['RT'], '.', markerfacecolor="None", color='#050505',
+                       mew=1.4, ms=1, antialiased=True, label='Data')
+    window = int(len(data) / 20)
+    if window % 2 == 0:
+        window += 1
+    figure2, = ax.plot(data['f'], savgol_filter(data['RT'], window, 2), lw=2)
+    if filename.endswith('.csv'):
+        name = filename[:-4]
+    Thing = RangeTool(data['f'], data['RT'], figure1, ax, name)
+    plt.xlabel('Frequency (Hz)', fontsize=14)
+    plt.ylabel('Variance (a.u)', fontsize=14)
+    plt.xlim([np.min(data['f']), np.max(data['f'])])
+    ax.axes.tick_params(labelsize=12)
+    plt.title('Relative light transmission for a given Helmholtz current as a function of frequency')
+    fullscreen()
+    plt.savefig("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\Sweep_plot_{}.pdf".format(
+            today), dpi=600)
+    plt.show()
+
+
+def fit_gauss(graph=False):
+    xranges, yranges, xrange, yrange, filename1, dat1 = range_to_list()
+    FitVals = DataFrame(columns=['Sigma', 'Center', 'Amplitude', 'FWHM', 'Height', 'Intercept', 'Slope', 'ChiSq',
+                                 'RedChiSq', 'Akaike', 'Bayesian'])
+    for i in range(0, len(xranges)):
+        mdl = GaussianModel()
+        line = LinearModel()
+        params = mdl.guess(data=yranges[i], x=xranges[i])
+        params += line.guess(data=yranges[i], x=xranges[i])
+        model = mdl + line
+        result = model.fit(yranges[i], params, x=xranges[i])
+        print(result.fit_report())
+        FitVals.at[i, 'Sigma'] = ufloat(result.params['sigma'].value, result.params['sigma'].stderr)
+        FitVals.at[i, 'Center'] = ufloat(result.params['center'].value, result.params['center'].stderr)
+        FitVals.at[i, 'Amplitude'] = ufloat(result.params['amplitude'].value, result.params['amplitude'].stderr)
+        FitVals.at[i, 'FWHM'] = ufloat(result.params['fwhm'].value, result.params['fwhm'].stderr)
+        FitVals.at[i, 'Height'] = ufloat(result.params['height'].value, result.params['height'].stderr)
+        FitVals.at[i, 'Intercept'] = ufloat(result.params['intercept'].value, result.params['intercept'].stderr)
+        FitVals.at[i, 'Slope'] = ufloat(result.params['slope'].value, result.params['slope'].stderr)
+        FitVals.at[i, 'ChiSq'] = result.chisqr
+        FitVals.at[i, 'RedChiSq'] = result.redchi
+        FitVals.at[i, 'Akaike'] = result.aic
+        FitVals.at[i, 'Bayesian'] = result.bic
+        if graph:
+            plt.plot(xranges[i], yranges[i], '.', markerfacecolor="None", color='#050505',
+                     mew=1.4, ms=1, antialiased=True, label='Data from frequency sweep')
+            plt.plot(xranges[i], result.best_fit, lw=2, label='Gaussian + Line fit')
+            plt.legend()
+            plt.xlabel('Frequency (Hz)')
+            plt.ylabel('Variance (a.u)')
+            fullscreen()
+            plt.show()
+
+
+def bulk_fit():
+    datafolder = filedialog.askopenfilenames(initialdir="C:\\Users\Josh\IdeaProjects\OpticalPumping",
+                                             title="Select data to convert")
+    k = -1
+    FitVals = DataFrame(columns=['Current', 'Sigma', 'Center', 'Amplitude', 'FWHM', 'Height', 'Intercept',
+                                 'Slope', 'ChiSq',
+                                 'RedChiSq', 'Akaike', 'Bayesian'])
+    rdat = DataFrame(columns=['f', 'I', 'f_uncert', 'I_uncert'])
+    for filename in datafolder:
+        name_ext = filename.split('/')[-1]
+        if 'A' in filename and 'NO' not in filename and 'ODD' not in filename:
+            k += 1
+            dat1 = read_csv("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\Sweep_dat\\{}".format(name_ext),
+                            names=['f', 'RT'])
+            dat2 = read_csv("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\Sweep_ranges\\{}".format(name_ext),
+                            names=['Lower Bound', 'LowerIndex', 'Upper Bound', 'UpperIndex'])
+            xrange = []
+            yrange = []
+            xranges = {}
+            yranges = {}
+            x_append = xrange.append
+            y_append = yrange.append
+            for o in range(0, len(dat2)):
+                x_append((dat1['f'][dat2['LowerIndex'][o]:dat2['UpperIndex'][o] + 1]).values)
+                y_append((dat1['RT'][dat2['LowerIndex'][o]:dat2['UpperIndex'][o] + 1]).values)
+            for o in range(0, len(xrange)):
+                xranges[o] = xrange[o]
+                yranges[o] = yrange[o]
+            for i in range(0, len(xranges)):
+                mdl = GaussianModel()
+                line = LinearModel()
+                params = mdl.guess(data=yranges[i], x=xranges[i])
+                params += line.guess(data=yranges[i], x=xranges[i])
+                model = mdl + line
+                result = model.fit(yranges[i], params, x=xranges[i])
+                # print(result.fit_report())
+                j = len(FitVals)
+                leader = name_ext.split('_')[1]
+                print(leader)
+                current = leader.split('A')[0]
+                curr_uncert_step1 = current.split('A')[0]
+                if '-' in curr_uncert_step1:
+                    curr_uncert_step1 = curr_uncert_step1.split('-')[1]
+                curr_uncert_step2 = curr_uncert_step1.split('.')[-1]
+                curr_uncert = '0.'
+                for p in range(0, len(curr_uncert_step2)):
+                    curr_uncert += '0'
+                curr_uncert += '5'
+                print(curr_uncert)
+                FitVals.at[j, 'Current'] = ufloat(float(current), float(curr_uncert))
+                rdat.at[j, 'I'] = float(current)
+                rdat.at[j, 'I_uncert'] = float(curr_uncert)
+                FitVals.at[j, 'Sigma'] = ufloat(result.params['sigma'].value, result.params['sigma'].stderr)
+                FitVals.at[j, 'Center'] = ufloat(result.params['center'].value, result.params['center'].stderr)
+                rdat.at[j, 'f'] = result.params['center'].value
+                rdat.at[j, 'f_uncert'] = result.params['center'].stderr
+                FitVals.at[j, 'Amplitude'] = ufloat(result.params['amplitude'].value, result.params['amplitude'].stderr)
+                FitVals.at[j, 'FWHM'] = ufloat(result.params['fwhm'].value, result.params['fwhm'].stderr)
+                FitVals.at[j, 'Height'] = ufloat(result.params['height'].value, result.params['height'].stderr)
+                FitVals.at[j, 'Intercept'] = ufloat(result.params['intercept'].value, result.params['intercept'].stderr)
+                FitVals.at[j, 'Slope'] = ufloat(result.params['slope'].value, result.params['slope'].stderr)
+                FitVals.at[j, 'ChiSq'] = result.chisqr
+                FitVals.at[j, 'RedChiSq'] = result.redchi
+                FitVals.at[j, 'Akaike'] = result.aic
+                FitVals.at[j, 'Bayesian'] = result.bic
+    FitVals.to_csv("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\FitVals\\FitVals_{}.csv".format(today))
+    rdat.sort_values(['I'], inplace=True)
+    rdat.to_csv("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\RDAT\\Freq_Curr_{}.csv".format(today), index=False,
+                header=False)
+    print(FitVals)
+
+
+bulk_fit()
+# read_scan()
+# fit_gauss()
 vectorized_freq_as_curr_fitting()
 freq_as_curr_fitting()
