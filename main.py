@@ -446,7 +446,7 @@ def bulk_fit():
 
 
 bulk_fit()
-# read_scan()
+read_scan()
 # fit_gauss()
 vectorized_freq_as_curr_fitting()
 freq_as_curr_fitting()
