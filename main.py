@@ -442,11 +442,10 @@ def bulk_fit():
     rdat.sort_values(['I'], inplace=True)
     rdat.to_csv("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\RDAT\\Freq_Curr_{}.csv".format(today), index=False,
                 header=False)
-    print(FitVals)
 
 
-bulk_fit()
+# bulk_fit()
 read_scan()
-# fit_gauss()
-vectorized_freq_as_curr_fitting()
-freq_as_curr_fitting()
+fit_gauss(True)
+# vectorized_freq_as_curr_fitting()
+# freq_as_curr_fitting()

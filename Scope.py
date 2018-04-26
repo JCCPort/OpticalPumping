@@ -11,18 +11,18 @@ start = time()
 today = strftime("%Y-%m-%d_%H-%M-%S", gmtime())
 plt.switch_backend('QT5Agg')
 
-# pyvisa.log_to_screen()
+pyvisa.log_to_screen()
 rm = pyvisa.ResourceManager('@ni')
-# print(rm.list_resources())
+print(rm.list_resources())
 inst = rm.open_resource("USB0::0x0699::0x0363::C059771::INSTR", encoding='utf8')
-inst2 = rm.open_resource("USB0::0x0699::0x03B0::C010710::INSTR")
+inst2 = rm.open_resource("USB0::0x0699::0x03B0::C010710::INSTR", encoding='utf8')
 inst.read_termination = '\n'
 inst.write_termination = '\n'
 inst2.read_termination = '\n'
 inst2.write_termination = '\n'
 inst.write("DATA:SOURCE CH1")
 inst2.write("DATA:SOURCE CH1")
-print(inst2.session)
+# print(inst2.session)
 query = inst2.query
 query_binary = inst.query_binary_values
 arr = np.array
@@ -34,6 +34,8 @@ def f():
         freq = float(query(message='TRIGger:MAIn:FREQuency?'))
         rawdat_transdat = savgol_filter(arr(query_binary(message='CURV?', datatype='b',
                                                          is_big_endian=True)), 113, 1)
+        plt.plot(rawdat_transdat)
+        plt.show()
         var = vari(rawdat_transdat)
         return var, freq
     except pyvisa.errors.VisaIOError:
@@ -45,7 +47,7 @@ fs = []
 k = 1
 elapsed = 0
 data = pd.DataFrame(columns=['f', 'H'])
-while elapsed < (5 * 60):
+while elapsed < (20 * 60):
     elapsed = time() - start
     print(elapsed)
     vars, freqs = f()
