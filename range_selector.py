@@ -28,9 +28,9 @@ class RangeTool:
         self.lenx = len(self.x)
         miny = np.min(self.y)
         maxy = np.max(self.y)
-        self.ax.set_xlim(min(self.x), max(self.x))
+        # self.ax.set_xlim(min(self.x), max(self.x))
         height = maxy - miny
-        self.ax.set_ylim(miny - 0.1 * height, maxy + 0.1 * height)
+        # self.ax.set_ylim(miny - 0.1 * height, maxy + 0.1 * height)
         # text location in axes coords
         self.txt = ax.text(0.7, 0.9, '', transform=ax.transAxes)
         self.cid1 = figure2.figure.canvas.mpl_connect('key_press_event', self.rangeselect)

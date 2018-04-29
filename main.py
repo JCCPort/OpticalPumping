@@ -10,6 +10,7 @@ from scipy.odr import Model, RealData, ODR
 from scipy.optimize import curve_fit
 from scipy.signal import savgol_filter
 from seaborn import set_style
+from sympy import diff, Symbol, latex
 from uncertainties import ufloat
 
 from range_selector import RangeTool
@@ -21,14 +22,13 @@ plt.switch_backend('QT5Agg')
 mu_B = physical_constants['Bohr magneton']
 electron_g = physical_constants['electron g factor']
 m_e = physical_constants['electron mass']
-print(m_e)
 m_cs = [2.2069468e-25, 3.3210778e-34]
 g_I = [-0.00039885395, 0.0000000000052]
 lab_field_NOAA = [48585.7 * 0.00001, 152 * 0.00001]
 formatted_NOAA = ufloat(lab_field_NOAA[0], lab_field_NOAA[1])
 
 
-def electron_lande(J, S, L, gL=1 - (m_e[0] / m_cs[0]), gS=electron_g[0]):
+def electron_lande(J, S, L, gL=(1 - (m_e[0] / (m_cs[0] - (55 * m_e[0])))), gS=-electron_g[0]):
     """
 
     :param J: Total angular momentum of electron.
@@ -38,9 +38,24 @@ def electron_lande(J, S, L, gL=1 - (m_e[0] / m_cs[0]), gS=electron_g[0]):
     :param gS: Electron spin g-factor.
     :return gJ: Landé g-factor.
     """
-    term1 = gL * ((J * (J + 1) - S * (S + 1) + L * (L + 1)) / (2 * J * (J + 1)))
-    term2 = gS * ((J * (J + 1) + S * (S + 1) - L * (L + 1)) / (2 * J * (J + 1)))
+    term1 = gL * (((J * (J + 1)) - (S * (S + 1)) + (L * (L + 1))) / (2 * (J * (J + 1))))
+    term2 = gS * (((J * (J + 1)) + (S * (S + 1)) - (L * (L + 1))) / (2 * (J * (J + 1))))
     return term1 + term2
+
+
+def error_prop_sympy():
+    g = Symbol('g_F')
+    mu1 = Symbol('mu_B')
+    h = Symbol('h')
+    mu2 = Symbol('mu_0')
+    N = Symbol('N')
+    I = Symbol('I')
+    R = Symbol('R')
+    B1 = Symbol('B_parr')
+    B2 = Symbol('B_perp')
+    v = (g * mu1 / h) * (
+            ((8.0 / (125.0 ** (1 / 2))) * ((mu2 * N * I) / R) + B1) ** 2 + B2 ** 2) ** (1 / 2)
+    print(latex(diff(v, B1)))
 
 
 def hyperfine_lande(F, I, J, gJ, gI=g_I[0]):
@@ -53,8 +68,8 @@ def hyperfine_lande(F, I, J, gJ, gI=g_I[0]):
     :param gI: Nuclear g-factor.
     :return gF: Hyperfine Landé g-factor.
     """
-    term1 = gJ * ((F * (F + 1) - I * (I + 1) + J * (J + 1)) / (2 * F * (F + 1)))
-    term2 = gI * ((F * (F + 1) + I * (I + 1) - J * (J + 1)) / (2 * F * (F + 1)))
+    term1 = gJ * (((F * (F + 1)) - (I * (I + 1)) + (J * (J + 1))) / (2 * (F * (F + 1))))
+    term2 = gI * (((F * (F + 1)) + (I * (I + 1)) - (J * (J + 1))) / (2 * (F * (F + 1))))
     return term1 + term2
 
 
@@ -68,13 +83,16 @@ def hyperfine_lande_uncert(F, I, J, S, L):
 
 gF3 = [hyperfine_lande(F=3, I=7 / 2, J=1 / 2, gJ=electron_lande(J=1 / 2, S=1 / 2, L=0)),
        hyperfine_lande_uncert(F=3, I=7 / 2, J=1 / 2, S=1 / 2, L=0)]
-print(hyperfine_lande_uncert(F=3, I=7 / 2, J=1 / 2, S=1 / 2, L=0))
 gF2 = [hyperfine_lande(F=2, I=7 / 2, J=1 / 2, gJ=electron_lande(J=1 / 2, S=1 / 2, L=0)),
        hyperfine_lande_uncert(F=2, I=7 / 2, J=1 / 2, S=1 / 2, L=0)]
+gF4 = [hyperfine_lande(F=4, I=7 / 2, J=1 / 2, gJ=electron_lande(J=1 / 2, S=1 / 2, L=0)),
+       hyperfine_lande_uncert(F=4, I=7 / 2, J=1 / 2, S=1 / 2, L=0)]
+
+formatted_gf4 = ufloat(gF4[0], gF4[1])
 formatted_gf3 = ufloat(gF3[0], gF3[1])
 formatted_gf2 = ufloat(gF2[0], gF3[1])
-
-print(hyperfine_lande(F=4, I=7 / 2, J=1 / 2, gJ=electron_lande(J=1 / 2, S=1 / 2, L=0)))
+print('g_(F=4):', formatted_gf4)
+print('g_(F=3):', formatted_gf3)
 
 
 def fullscreen():
@@ -144,6 +162,18 @@ def helmholtz(I, R):
     return (8 / (125 ** (1 / 2))) * (mu_0 * 50 * I) / R
 
 
+def helmholtz_uncert(I, I_uncert):
+    C = 8 / (125 ** (1 / 2))
+    N = 50
+    R = 0.2915
+    N_uncert = 1
+    R_uncert = 0.02
+    term_N = ((C * mu_0 * I / R) * N_uncert) ** 2
+    term_I = ((C * mu_0 * N / R) * I_uncert) ** 2
+    term_R = ((-C * mu_0 * N * I / (R ** 2)) * R_uncert) ** 2
+    return np.sqrt(term_N + term_I + term_R)
+    
+
 # TODO: Consider posibility of adjusting Pythargoras' theorem to a 3D form.
 def mag_field_comps(B_coil, B_parr, B_perp):
     """
@@ -192,7 +222,7 @@ def vectorized_freq_as_curr(P, I):
     :return:
     """
     delta_m = 1.0
-    R = 0.31
+    R = 0.29
     return (P[0] * mu_B[0] * delta_m / h) * np.sqrt(
             ((8.0 / (np.sqrt(125.0))) * ((mu_0 * 50.0 * I) / R) + P[1]) ** 2 + P[2] ** 2)
 
@@ -261,6 +291,7 @@ def vectorized_freq_as_curr_fitting():
     """
     data, filename = pick_dat(['f', 'I', 'f_uncert', 'I_uncert'], 'RDAT')
     model = Model(vectorized_freq_as_curr)
+    x_err = helmholtz_uncert(data['I'], data['I_uncert'])
     mydata = RealData(x=data['I'], y=data['f'], sx=data['I_uncert'], sy=data['f_uncert'])
     myodr = ODR(mydata, model, beta0=[0.25, 2.e-5, 3.e-5], maxit=10000)
     myoutput = myodr.run()
@@ -276,7 +307,10 @@ def vectorized_freq_as_curr_fitting():
     popu_calc = [ufloat(net_mag, net_mag_err)]
     mag_flux_overlap = (abs(popu_calc[0].n - formatted_NOAA.n) / (popu_calc
                                                                   [0].std_dev + formatted_NOAA.std_dev))
-    lande_overlap = (abs(popu[0].n - formatted_gf3.n) / (popu[0].std_dev + formatted_gf3.std_dev))
+    lande_overlap = (abs(popu[0].n - formatted_gf4.n) / (popu[0].std_dev + formatted_gf4.std_dev))
+    B_tot = mag_field_comps(helmholtz(data['I'], 0.2914), opt_vals[1], opt_vals[2])
+    B_coil = helmholtz(data['I'], 0.2914)
+    print(B_tot * 10000)
     print('\n')
     print('-------------------------------------------------------------------')
     print("\tEarth's magnetic flux density (∥): \t \t {:.4f} G".format(popu[1]))
@@ -287,15 +321,16 @@ def vectorized_freq_as_curr_fitting():
     print('\tStd. Dev. Separation: \t \t \t \t \t {:.2f}'.format(mag_flux_overlap))
     print('\n')
     print('\tLandé g-factor: \t \t \t \t \t \t {:.4f}'.format(popu[0]))
-    print('\tCalculated Landé g-factor: \t \t \t \t {:.4f}'.format(formatted_gf3))
+    print('\tCalculated Landé g-factor: \t \t \t \t {:.15f}'.format(formatted_gf4))
     print('\tStd. Dev. Separation: \t \t \t \t \t {:.2f}'.format(lande_overlap))
     print('\n')
     print('\tReduced chi-sq: \t \t \t \t \t \t {:.2f}'.format(myoutput.res_var / (len(data['I']) - len(opt_vals))))
     print('-------------------------------------------------------------------')
     print('\n')
     max_x = np.max(data['I'])
+    min_x = np.min(data['I'])
     max_y = np.max(data['f'])
-    plot_vals = np.linspace(float(-max_x), max_x, 1000)
+    plot_vals = np.linspace(min_x, max_x, 1000)
     fig, ax = plt.subplots()
     ax.axhline(y=0, color='k', alpha=0.5)
     ax.axvline(x=0, color='k', alpha=0.5)
@@ -304,9 +339,11 @@ def vectorized_freq_as_curr_fitting():
     plt.title('Hyperfine energy splitting as a function of Helmholtz coil current')
     figure2, = ax.plot(data['I'], data['f'], 'o', markerfacecolor="None", color='#050505',
                        mew=1.4, ms=7, antialiased=True, label='Data')
-    ax.plot(plot_vals, vectorized_freq_as_curr(I=plot_vals, P=myoutput.beta), antialiased=True, lw=2.5, label='ODR Fit',
-            color='k')
-    Sel = RangeTool(data['I'], data['f'], figure2, ax, 'Thing')
+    figure3, = ax.plot(plot_vals, vectorized_freq_as_curr(I=plot_vals, P=myoutput.beta), antialiased=True, lw=2.5,
+                       label='ODR Fit', color='k')
+    plt.errorbar(data['I'], data['f'], xerr=data['I_uncert'], yerr=data['f_uncert'], fmt='none', ecolor='#050505',
+                 label=None)
+    Sel = RangeTool(plot_vals, vectorized_freq_as_curr(I=plot_vals, P=myoutput.beta), figure3, ax, 'Thing')
     plt.xlim((-max_x * 1.15, max_x * 1.15))
     plt.ylim((0, max_y * 1.15))
     fullscreen()
@@ -318,6 +355,7 @@ def vectorized_freq_as_curr_fitting():
 
 def read_scan():
     data, filename = pick_dat(['f', 'RT'], 'Sweep_dat')
+    meanfreq = np.mean(data['f'])
     fig, ax = plt.subplots()
     figure1, = ax.plot(data['f'], data['RT'], '.', markerfacecolor="None", color='#050505',
                        mew=1.4, ms=1, antialiased=True, label='Data')
@@ -327,37 +365,32 @@ def read_scan():
     figure2, = ax.plot(data['f'], savgol_filter(data['RT'], window, 2), lw=2)
     if filename.endswith('.csv'):
         name = filename[:-4]
-    Thing = RangeTool(data['f'], data['RT'], figure1, ax, name)
+    # Thing = RangeTool(data['f'], data['RT'], figure1, ax, name)
     plt.xlabel('Frequency (Hz)', fontsize=14)
     plt.ylabel('Variance (a.u)', fontsize=14)
     plt.xlim([np.min(data['f']), np.max(data['f'])])
     ax.axes.tick_params(labelsize=12)
     plt.title('Relative light transmission for a given Helmholtz current as a function of frequency')
     fullscreen()
-    plt.savefig("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\Sweep_plot_{}.pdf".format(
-            today), dpi=600)
+    plt.savefig("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\Sweep_plot_{:.3}Hz_{}.png".format(
+            meanfreq, today), dpi=600)
     plt.show()
 
 
-def fit_gauss(graph=False):
+def fit_gauss(graph=False, cdf=False, residuals=False):
     xranges, yranges, xrange, yrange, filename1, dat1 = range_to_list()
     FitVals = DataFrame(columns=['Sigma', 'Center', 'Amplitude', 'FWHM', 'Height', 'Intercept', 'Slope', 'ChiSq',
                                  'RedChiSq', 'Akaike', 'Bayesian'])
     for i in range(0, len(xranges)):
         mdl = GaussianModel()
-        line = LinearModel()
         params = mdl.guess(data=yranges[i], x=xranges[i])
-        params += line.guess(data=yranges[i], x=xranges[i])
-        model = mdl + line
-        result = model.fit(yranges[i], params, x=xranges[i])
+        result = mdl.fit(yranges[i], params, x=xranges[i])
         print(result.fit_report())
         FitVals.at[i, 'Sigma'] = ufloat(result.params['sigma'].value, result.params['sigma'].stderr)
         FitVals.at[i, 'Center'] = ufloat(result.params['center'].value, result.params['center'].stderr)
         FitVals.at[i, 'Amplitude'] = ufloat(result.params['amplitude'].value, result.params['amplitude'].stderr)
         FitVals.at[i, 'FWHM'] = ufloat(result.params['fwhm'].value, result.params['fwhm'].stderr)
         FitVals.at[i, 'Height'] = ufloat(result.params['height'].value, result.params['height'].stderr)
-        FitVals.at[i, 'Intercept'] = ufloat(result.params['intercept'].value, result.params['intercept'].stderr)
-        FitVals.at[i, 'Slope'] = ufloat(result.params['slope'].value, result.params['slope'].stderr)
         FitVals.at[i, 'ChiSq'] = result.chisqr
         FitVals.at[i, 'RedChiSq'] = result.redchi
         FitVals.at[i, 'Akaike'] = result.aic
@@ -369,6 +402,28 @@ def fit_gauss(graph=False):
             plt.legend()
             plt.xlabel('Frequency (Hz)')
             plt.ylabel('Variance (a.u)')
+            fullscreen()
+            plt.show()
+        if cdf:
+            values, base = np.histogram(yranges[i], bins='auto')
+            cumulative = np.cumsum(values)
+            plt.plot(base[:-1], cumulative)
+            plt.plot(base[:-1], values)
+            fullscreen()
+            plt.show()
+        if residuals:
+            values, base = np.histogram(result.residual, bins='fd')
+            cumulative = np.cumsum(values)
+            # plt.plot(xranges[i], result.residual)
+            # plt.plot(base[:-1], cumulative, '.')
+            mdl2 = GaussianModel()
+            params2 = mdl2.guess(data=values, x=base[:-1])
+            model2 = mdl2
+            result2 = model2.fit(values, params2, x=base[:-1])
+            plt.plot(base[:-1], values, '.')
+            plt.plot(base[:-1], result2.best_fit)
+            plt.xlabel('Residuals')
+            plt.ylabel('Counts')
             fullscreen()
             plt.show()
 
@@ -444,8 +499,41 @@ def bulk_fit():
                 header=False)
 
 
+def bulk_plot():
+    datafolder = filedialog.askopenfilenames(initialdir="C:\\Users\Josh\IdeaProjects\OpticalPumping",
+                                             title="Select data for bulk plotting")
+    for filename in datafolder:
+        name_ext = filename.split('/')[-1]
+        if 'A' in filename and 'NO' not in filename and 'ODD' not in filename:
+            run = name_ext.split('_')[1]
+            dat1 = read_csv("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\Sweep_dat\\{}".format(name_ext),
+                            names=['f', 'RT'])
+            dat1 = dat1[np.abs(dat1['f'] - dat1['f'].mean()) <= (3 * dat1['f'].std())]
+            meanfreq = np.mean(dat1['f'])
+            fig, ax = plt.subplots(figsize=(14, 6))
+            figure1, = ax.plot(dat1['f'], dat1['RT'], '.', markerfacecolor="None", color='#050505',
+                               mew=1.4, ms=1, antialiased=True, label='dat1')
+            window = int(len(dat1) / 20)
+            if window % 2 == 0:
+                window += 1
+            figure2, = ax.plot(dat1['f'], savgol_filter(dat1['RT'], window, 2), lw=2)
+            if filename.endswith('.csv'):
+                name = filename[:-4]
+            plt.xlabel('Frequency (Hz)', fontsize=14)
+            plt.ylabel('Variance (a.u)', fontsize=14)
+            plt.xlim([np.min(dat1['f']), np.max(dat1['f'])])
+            ax.axes.tick_params(labelsize=12)
+            plt.title('{}'.format(run))
+            plt.savefig(
+                    "C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\Sweep_plot_{:.3f}kHz_{}.png".format(
+                            meanfreq / 1000, today), dpi=600)
+            plt.close()
+
+
+# bulk_plot()
+# error_prop_sympy()
 # bulk_fit()
-read_scan()
-fit_gauss(True)
-# vectorized_freq_as_curr_fitting()
+# read_scan()
+# fit_gauss(True, cdf=False, residuals=False)
+vectorized_freq_as_curr_fitting()
 # freq_as_curr_fitting()
