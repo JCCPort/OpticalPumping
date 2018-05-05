@@ -1,12 +1,15 @@
 from time import gmtime, strftime
 from tkinter import filedialog, Tk
+from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
+from lmfit import Model
 from lmfit.models import GaussianModel, LinearModel
 from pandas import read_csv, read_hdf, DataFrame
+from scipy import fftpack
 from scipy.constants import mu_0, physical_constants, h
-from scipy.odr import Model, RealData, ODR
+# from scipy.odr import Model, RealData, ODR
 from scipy.optimize import curve_fit
 from scipy.signal import savgol_filter
 from seaborn import set_style
@@ -15,6 +18,7 @@ from uncertainties import ufloat
 
 from range_selector import RangeTool
 
+e = 2.7182818
 today = strftime("%Y-%m-%d_%H-%M-%S", gmtime())
 set_style("whitegrid")
 # set_palette("Set1")
@@ -26,6 +30,11 @@ m_cs = [2.2069468e-25, 3.3210778e-34]
 g_I = [-0.00039885395, 0.0000000000052]
 lab_field_NOAA = [48585.7 * 0.00001, 152 * 0.00001]
 formatted_NOAA = ufloat(lab_field_NOAA[0], lab_field_NOAA[1])
+
+
+def find_nearest(array, value):
+    idx = (np.abs(array - value)).argmin()
+    return array[idx]
 
 
 def electron_lande(J, S, L, gL=(1 - (m_e[0] / (m_cs[0] - (55 * m_e[0])))), gS=-electron_g[0]):
@@ -128,14 +137,14 @@ def range_to_list(smooth=False):
     This function is used to create an array of values from a dataset that's limits are given by a list lower and
     upper limits. THIS IS CONFIGURED FOR MY COMPUTER, CHANGE THE DIRECTORY TO USE.
     """
-    dat1, filename1 = pick_dat(['t', 'm'], "Sweep_dat", "Select dataset to draw from")
+    dat1, filename1 = pick_dat(['V', 'T'], "Sweep_dat", "Select dataset to draw from")
     dat2 = read_csv("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\Sweep_ranges\\{}".format(filename1),
                     names=['Lower Bound', 'LowerIndex', 'Upper Bound', 'UpperIndex'])
     if smooth:
         win_len = int(len(dat1) / 10)
         if win_len % 2 == 0:
             win_len += 1
-        dat1['m'] = savgol_filter(dat1['m'], win_len, 1)
+        dat1['T'] = savgol_filter(dat1['T'], win_len, 1)
     xrange = []
     yrange = []
     xranges = {}
@@ -143,12 +152,49 @@ def range_to_list(smooth=False):
     x_append = xrange.append
     y_append = yrange.append
     for o in range(0, len(dat2)):
-        x_append((dat1['t'][dat2['LowerIndex'][o]:dat2['UpperIndex'][o] + 1]).values)
-        y_append((dat1['m'][dat2['LowerIndex'][o]:dat2['UpperIndex'][o] + 1]).values)
+        x_append((dat1['V'][dat2['LowerIndex'][o]:dat2['UpperIndex'][o] + 1]).values)
+        y_append((dat1['T'][dat2['LowerIndex'][o]:dat2['UpperIndex'][o] + 1]).values)
     for o in range(0, len(xrange)):
         xranges[o] = xrange[o]
         yranges[o] = yrange[o]
     return xranges, yranges, xrange, yrange, filename1, dat1
+
+
+def echo_as_T2(t, M0, T2, m, m1, c, ph):
+    """
+
+    :param t:
+    :param M0: Initial magnetization in z direction.
+    :param T2: Spin-spin relaxation time.
+    :param c: Intercept to compensate for DC-offset.
+    :param ph: Phase difference.
+    :return: Magnetization in the xy-plane.
+    """
+    # Old form:
+    return M0 * (np.exp(-((t - ph) / T2))) - m1 * t ** 2 + m * t + c
+    # return M0 * (np.exp(-(t / T2) + ph)) + c
+
+
+def Rabi_1(t, A, o_ab, g_ab, o, w_ba, w, g, c1, c0, p):
+    num = (o_ab ** 1) * np.exp(-g_ab * t / 2) * (np.sin(t * o / 2 + p)) ** 1
+    denom = np.sqrt(((w_ba - w) ** 2) + ((g / 2) ** 2) + o_ab ** 2)
+    return A * (num / denom) + + c1 * t + c0
+
+
+def Rabi_2(t, A, o, g, p, c):
+    o_g = np.sqrt(o ** 2 + (g / 4) ** 2)
+    term1 = np.cos(o_g * (t + p) + np.sin(o_g * (t + p)) * (o ** 2 - g ** 2 / 4) / (g * o_g))
+    term2 = 1 - np.exp(-(3 * g * (t + p) / 4)) * term1
+    term3 = -1 + (o ** 2) / (o ** 2 + (g ** 2) / 2) * term2
+    return A * term3 + c
+
+
+def Rabi_3(t, O, w, A, c, p1, p2, m):
+    return -A * np.sin(2 * O * t + p1) * np.sin(w * t + p2) + m * t + c
+
+
+def damped_sine(t, A, o, g, p, c):
+    return A * np.exp(-g * t) * np.sin(t * o + p) ** 2 + c
 
 
 def helmholtz(I, R):
@@ -504,7 +550,7 @@ def bulk_plot():
                                              title="Select data for bulk plotting")
     for filename in datafolder:
         name_ext = filename.split('/')[-1]
-        if 'A' in filename and 'NO' not in filename and 'ODD' not in filename:
+        if 'NO' or 'ODD' in filename:
             run = name_ext.split('_')[1]
             dat1 = read_csv("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\Sweep_dat\\{}".format(name_ext),
                             names=['f', 'RT'])
@@ -530,10 +576,227 @@ def bulk_plot():
             plt.close()
 
 
+def pick_ranges():
+    """
+    Tool to read data and present it graphically ready for data ranges, to be used in fitting, to be made. Press tab
+    to mark the lower bound, shift to mark the upper bound, delete to remove the last range selected, enter to open a
+    dialog box to save the ranges as a .csv file. Exit closes the plot without saving ranges.
+    """
+    dat, filename = pick_dat(['T', 'V'], 'Sweep_dat', 'Select file to pick ranges in')
+    fig, ax = plt.subplots()
+    name = filename.split('.csv')[0]
+    plt.title('{} Fourier Transformed'.format(name))
+    figure, = ax.plot(dat['T'], dat['V'])
+    Sel = RangeTool(dat['T'], dat['V'], figure, ax, name)
+    fig_manager = plt.get_current_fig_manager()
+    fig_manager.window.showMaximized()
+    plt.show()
+
+
+def echo_fits():
+    """
+    Fits a Gaussian with a linear background to each of the echo peaks, finds the centroid and top of
+    the Gaussian, then fits the echo_as_T2 function to the points given by x=centroid, y=top.
+    """
+    xrs, yrs, xr, yr, filename, dat1 = range_to_list()
+    cents: List[float] = []
+    cents_uncert: List[float] = []
+    heights: List[float] = []
+    heights_uncert: List[float] = []
+    for i in range(0, len(xrs)):
+        print(xrs, yrs)
+        mdl = GaussianModel(prefix='G_')
+        lne = LinearModel(prefix='L_')
+        params = mdl.guess(yrs[i], x=xrs[i])
+        params += lne.guess(yrs[i], x=xrs[i])
+        max_y = np.max(yrs[i])
+        min_y = np.min(yrs[i])
+        max_x = np.max(yrs[i])
+        min_x = np.min(yrs[i])
+        predicted_slope = (max_y - min_y) / (max_x - min_x)
+        # params.add('L_slope', value=predicted_slope, min=predicted_slope * 1.1, max=predicted_slope * 0.9)
+        # params.add('L_intercept', value=min_y, min=min_y * 0.9, max=min_y * 1.1)
+        # params.add('G_height', value=max_y - min_y, min=(max_y - min_y) * 0.99, max=(max_y - min_y) * 1.05)
+        model = mdl + lne
+        result = model.fit(yrs[i], params, x=xrs[i], method='leastsq')
+        plt.plot(xrs[i], result.best_fit)
+
+        cent: float = result.params['G_center'].value
+        amp: float = result.params['G_height'].value
+        inter: float = result.params['L_intercept'].value
+        grad: float = result.params['L_slope'].value
+        height: float = amp + ((cent * grad) + inter)
+        heights.append(height)
+        cents.append(cent)
+        cents_uncert.append(result.params['G_center'].stderr)
+        partial_amp = 1
+        partial_grad = cent
+        partial_x = grad
+        partial_inter = 1
+        amp_term = partial_amp * result.params['G_height'].stderr
+        grad_term = partial_grad * result.params['L_slope'].stderr
+        x_term = partial_x * np.mean(np.diff(xrs[i]))
+        inter_term = partial_inter * result.params['L_intercept'].stderr
+        height_uncert = np.sqrt(amp_term ** 2 + grad_term ** 2 + x_term ** 2 + inter_term ** 2)
+        heights_uncert.append(height_uncert)
+        plt.plot(xrs[i], yrs[i])
+    plt.show()
+    heights = np.array(heights)
+    cents = np.array(cents)
+    maxy = np.max(heights)
+    miny = np.min(heights)
+    decay_pos = np.where(heights == find_nearest(heights, maxy / e))[0][0]
+    decay_pos_time = cents[decay_pos]
+    print(heights, cents)
+    avg_y_sep = abs(np.mean(np.diff(heights)))
+    efit = Model(echo_as_T2)
+    param = efit.make_params()
+    param.add('M0', value=maxy, min=maxy * 0.8, max=maxy + (avg_y_sep * 2))
+    param.add('T2', value=decay_pos_time, min=decay_pos_time * 0.1, max=decay_pos_time * 1.5)
+    param.add('c', value=miny * 0.3, min=miny * 0.1, max=miny * 1)
+    param.add('ph', value=cents[0] * 0.1, min=0, max=cents[0] * 1)
+    result_2 = efit.fit(heights, param, t=cents, method='leastsq', weights=np.sqrt(np.mean(np.diff(dat1['V'])) ** 2 +
+                                                                                   np.array(heights_uncert) ** 2) /
+                                                                           heights)
+    print(result_2.fit_report())
+    print('\n', result_2.params.pretty_print(fmt='e', precision=2))
+    ax = plt.gca()
+    ax.set_xlabel('Time (s)', fontsize=14)
+    ax.set_ylabel('Magnetization (A/m)', fontsize=14)
+    xes = np.linspace(np.min(cents), np.max(cents), 100)
+    y = efit.eval(t=xes, params=result_2.params)
+    plt.plot(xes, y, antialiased=True)
+    # plt.plot(cents, heights, 'x', ms=8, color='k')
+    # plt.plot(dat1['V'], dat1['T'], lw=2, antialiased=True,
+    #          color='#4a4a4a', zorder=1)
+    plt.title(filename)
+    # plt.xlim(left=0, right=np.max(cents) * 1.1)
+    # plt.ylim(bottom=0, top=result_2.params['M0'].value * 1.3)
+    # plt.axhline(result_2.params['M0'].value, color='k', ls='--', alpha=0.7, lw=1, zorder=2)
+    # plt.axhline(result_2.params['M0'].value / e, color='k', ls='--', alpha=0.7, lw=1, zorder=2)
+    plt.text(0.9, 0.9, "T_1: {:.4f} s".format(result_2.params['T2'].value), horizontalalignment='center',
+             verticalalignment="center",
+             transform=ax.transAxes,
+             bbox={'pad': 8, 'fc': 'w'}, fontsize=14)
+    plt.tight_layout()
+    plt.tick_params(axis='both', which='major', labelsize=13)
+    fig_manager = plt.get_current_fig_manager()
+    fig_manager.window.showMaximized()
+    plt.show()
+
+
+def simple_echo_fits():
+    """
+    Takes the highest point of each echo and fits the echo_as_T2 function to those points.
+    """
+    xrs, yrs, xr, yr, filename, dat1 = range_to_list()
+    length = len(yrs)
+    max_y = [np.max(yrs[i]) for i in range(length)]
+    max_y_loc = [np.where(yrs[i] == max_y[i])[0][0] for i in range(length)]
+    cents = [xrs[i][max_y_loc[i]] for i in range(length)]
+    heights = max_y
+    # TODO: Find a better value for the uncertainty on y-values.
+    heights = np.array(heights)
+    cents = np.array(cents)
+    maxy = np.max(heights)
+    miny = np.min(heights)
+    decay_pos = np.where(heights == find_nearest(heights, maxy / e))[0][0]
+    decay_pos_time = cents[decay_pos]
+    avg_y_sep = abs(np.mean(np.diff(heights)))
+    efit = Model(echo_as_T2)
+    print(efit, echo_as_T2)
+    param = efit.make_params()
+    param.add('M0', value=maxy, min=maxy * 0.5, max=maxy + (avg_y_sep * 5))
+    param.add('T2', value=decay_pos_time, min=decay_pos_time * 0.1, max=decay_pos_time * 2.5)
+    param.add('c', value=miny * 0.3, min=miny * 0.1, max=miny * 2.2)
+    param.add('ph', value=cents[0] * 0.5, min=0, max=cents[0] * 2)
+    param.add('m1', value=0.1)
+    param.add('m', value=1)
+    result_2 = efit.fit(heights, param, t=cents, method='leastsq', weights=np.mean(np.diff(dat1['T'])) / heights)
+    print(result_2.fit_report())
+    print('\n', result_2.params.pretty_print())
+    ax = plt.gca()
+    ax.set_xlabel('Time (us)', fontsize=14)
+    ax.set_ylabel('Voltage (V)', fontsize=14)
+    xes = np.linspace(np.min(cents), np.max(cents), 100)
+    y = efit.eval(t=xes, params=result_2.params)
+    plt.plot(xes, y, antialiased=True)
+    plt.plot(cents, heights, 'x', ms=8, color='k')
+    plt.plot(dat1['V'], dat1['T'], lw=2, antialiased=True,
+             color='#4a4a4a', zorder=1)
+    plt.title(filename)
+    plt.xlim(left=0, right=np.max(cents) * 1.1)
+    # plt.ylim(bottom=0, top=result_2.params['M0'].value * 1.1)
+    plt.axhline(result_2.params['M0'].value, color='k', ls='--', alpha=0.7, lw=1, zorder=2)
+    plt.axhline(result_2.params['M0'].value / e, color='k', ls='--', alpha=0.7, lw=1, zorder=2)
+    plt.text(0.9, 0.9, "T_1: {:.4f} us".format(result_2.params['T2'].value), horizontalalignment='center',
+             verticalalignment="center",
+             transform=ax.transAxes,
+             bbox={'pad': 8, 'fc': 'w'}, fontsize=14)
+    plt.tight_layout()
+    plt.tick_params(axis='both', which='major', labelsize=13)
+    fig_manager = plt.get_current_fig_manager()
+    fig_manager.window.showMaximized()
+    plt.show()
+
+
+def fourier_transformer():
+    """
+    Fourier transforms the combined FID signals of different chemical sites to give a frequency (NMR) spectrum.
+    """
+    dat, filename = pick_dat(['T', 'V'], 'Sweep_dat', 'Select data to be Fourier Transformed')
+    dat['V'] = savgol_filter(dat['V'], 33, 5)
+    lower_lim = 300
+    upper_lim = 4700
+    dat = dat[lower_lim:upper_lim]
+    sample_rate = round(1 / np.mean(np.diff(dat['T'])), 11)
+    length = len(dat['T'])
+    fo = fftpack.fft(dat['V'])
+    freq4 = [x * sample_rate / length for x in np.array(range(0, length))]
+    halfln = int(length / 2)
+    plt.title('{}'.format(filename))
+    fig_manager = plt.get_current_fig_manager()
+    fig_manager.window.showMaximized()
+    plt.plot(dat['T'], dat['V'])
+    plt.show()
+    fig, ax = plt.subplots()
+    plt.title('{} Fourier Transformed'.format(filename))
+    figure, = ax.plot(freq4[5:100], abs(fo[5:100]))
+    Sel = RangeTool(freq4[5:100], abs(fo[5:100]), figure, ax, 'thing')
+    fig_manager = plt.get_current_fig_manager()
+    fig_manager.window.showMaximized()
+    plt.show()
+
+
+# initial = [-2.22e-1, 9.31612e-3, 5.85125e-4, 3.609e+2, -1.0822e+1]
+# bounds = [25, 0, 0, 0, 1e-6, -1, -50, 252], \
+#          [50, 1000, 1000, 1, 1e-4, 0, -1, 452]
+
+
+def rabi_fit():
+    dat, filename = pick_dat(['T', 'V'], 'Sweep_dat', 'Select data to be Fourier Transformed')
+    lower_lim = 140
+    upper_lim = 5000
+    dat = dat[lower_lim:upper_lim]
+    initial = [0.012, 1 / 1200, -27, -5, 0, -2, 0.01]
+    bounds = [0.009, 1 / 2000, -30, -20, -500, -np.pi, -1], [0.02, 1 / 100, -25, 20, 500, np.pi, 1]
+    popt, pcov = curve_fit(Rabi_3, xdata=dat['T'], p0=initial, bounds=bounds, ydata=dat['V'], maxfev=100000,
+                           method='trf')
+    print(popt)
+    plt.plot(dat['T'], dat['V'])
+    plt.plot(dat['T'], Rabi_3(dat['T'], *popt))
+    fullscreen()
+    plt.show()
+
+
+# rabi_fit()
+# fourier_transformer()
+pick_ranges()
+simple_echo_fits()
 # bulk_plot()
 # error_prop_sympy()
 # bulk_fit()
 # read_scan()
 # fit_gauss(True, cdf=False, residuals=False)
-vectorized_freq_as_curr_fitting()
+# vectorized_freq_as_curr_fitting()
 # freq_as_curr_fitting()

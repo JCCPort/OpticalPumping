@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pyvisa
-from scipy.signal import medfilt, savgol_filter
+from scipy.signal import savgol_filter
 
 start = time()
 
@@ -32,42 +32,50 @@ vari = np.var
 def f():
     try:
         freq = float(query(message='TRIGger:MAIn:FREQuency?'))
-        rawdat_transdat = savgol_filter(arr(query_binary(message='CURV?', datatype='b',
-                                                         is_big_endian=True)), 113, 1)
+        rawdat_transdat = arr(query_binary(message='CURV?', datatype='b',
+                                           is_big_endian=True))
+        xarr = np.linspace(0, 4999, 5000)
         # plt.plot(rawdat_transdat)
         # plt.show()
-        var = vari(rawdat_transdat)
+        var = vari(savgol_filter(rawdat_transdat, 113, 1))
         # print(var)
-        return var, freq
+        return var, freq, rawdat_transdat, xarr
     except pyvisa.errors.VisaIOError:
         pass
 
 
-vs = []
-fs = []
-k = 1
-elapsed = 0
-data = pd.DataFrame(columns=['f', 'H'])
-while elapsed < (13 * 60):
-    elapsed = time() - start
-    print(elapsed)
-    vars, freqs = f()
-    data.at[k, 'H'] = vars
-    data.at[k, 'f'] = freqs
-    k += 1
+# vs = []
+# fs = []
+# k = 1
+# elapsed = 0
+# data = pd.DataFrame(columns=['f', 'H'])
+# while elapsed < (13 * 60):
+#     elapsed = time() - start
+#     print(elapsed)
+#     vars, freqs, rawdat_transdat = f()
+#     data.at[k, 'H'] = vars
+#     data.at[k, 'f'] = freqs
+#     k += 1
 
-print('Iterations per second:   {}'.format(k / elapsed))
+
+vars, freqs, rawdat, xs = f()
+print(rawdat)
+data = pd.DataFrame(np.transpose([xs, savgol_filter(rawdat, 133, 3)]), columns=['T', 'V'])
+# print('Iterations per second:   {}'.format(k / elapsed))
 current = input('What is the current?')
-
-print(vs, fs)
-data = data.drop(data[data['f'] > 1e7].index)
+VPP = input('What is the VPP Amplitude?')
+#
+# print(vs, fs)
+# data = data.drop(data[data['f'] > 1e7].index)
 
 fig, ax = plt.subplots()
-data.sort_values(['f'], inplace=True)
-data.to_csv('C:\\Users\Josh\IdeaProjects\OpticalPumping\Sweep_dat\data_{}A_{}.csv'.format(current, today),
+# data.sort_values(['f'], inplace=True)
+data.to_csv('C:\\Users\Josh\IdeaProjects\OpticalPumping\Sweep_dat\Rabi_{}__{:.2f}Hz__{}VPP.csv'.format(today, freqs,
+                                                                                                       VPP,
+                                                                                                       current),
             index=False, header=False)
-plt.plot(data['f'], medfilt(data['H'], 5), '.')
-plt.plot(data['f'], medfilt(data['H'], 5))
+# plt.plot(data['T'], medfilt(data['V'], 5), '.')
+plt.plot(data['T'], data['V'])
 plt.xlabel('Frequency (Hz)')
 plt.ylabel('Relative Transmission intensity (a.u)')
 fig_manager = plt.get_current_fig_manager()
