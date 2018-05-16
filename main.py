@@ -6,16 +6,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 from lmfit import Model
 from lmfit.models import GaussianModel, LinearModel
-from pandas import read_csv, read_hdf, DataFrame
+from pandas import read_csv, read_hdf, DataFrame, rolling_mean
 from scipy import fftpack
 from scipy.constants import mu_0, physical_constants, h
-# from scipy.odr import Model, RealData, ODR
+from scipy.interpolate import interp1d
+from scipy.odr import Model, RealData, ODR
 from scipy.optimize import curve_fit
 from scipy.signal import savgol_filter
 from seaborn import set_style
 from sympy import diff, Symbol, latex
 from uncertainties import ufloat
 
+from ResidualPlotter import MultiPlot
 from range_selector import RangeTool
 
 e = 2.7182818
@@ -160,7 +162,7 @@ def range_to_list(smooth=False):
     return xranges, yranges, xrange, yrange, filename1, dat1
 
 
-def echo_as_T2(t, M0, T2, m, m1, c, ph):
+def echo_as_T2(t, M0, T2, ph, c):
     """
 
     :param t:
@@ -171,14 +173,14 @@ def echo_as_T2(t, M0, T2, m, m1, c, ph):
     :return: Magnetization in the xy-plane.
     """
     # Old form:
-    return M0 * (np.exp(-((t - ph) / T2))) - m1 * t ** 2 + m * t + c
+    return M0 * (np.exp(-((t - ph) / T2))) + c
     # return M0 * (np.exp(-(t / T2) + ph)) + c
 
 
 def Rabi_1(t, A, o_ab, g_ab, o, w_ba, w, g, c1, c0, p):
-    num = (o_ab ** 1) * np.exp(-g_ab * t / 2) * (np.sin(t * o / 2 + p)) ** 1
-    denom = np.sqrt(((w_ba - w) ** 2) + ((g / 2) ** 2) + o_ab ** 2)
-    return A * (num / denom) + + c1 * t + c0
+    num = (o_ab ** 2) * np.exp(-g_ab * t / 2) * (np.sin(t * o / 2 + p)) ** 2
+    denom = ((w_ba - w) ** 2) + ((g / 2) ** 2) + o_ab ** 2
+    return A * (num / denom) + c1 * t + c0
 
 
 def Rabi_2(t, A, o, g, p, c):
@@ -195,6 +197,10 @@ def Rabi_3(t, O, w, A, c, p1, p2, m):
 
 def damped_sine(t, A, o, g, p, c):
     return A * np.exp(-g * t) * np.sin(t * o + p) ** 2 + c
+
+
+def quadratic(x, C1, C2, C3):
+    return -C1 * x ** 2 + C2 * x + C3
 
 
 def helmholtz(I, R):
@@ -312,6 +318,7 @@ def freq_as_curr_fitting():
     max_y = np.max(data['f'])
     plot_vals = np.linspace(float(-max_x), max_x, 1000)
     fig, ax = plt.subplots()
+
     ax.axhline(y=0, color='k', alpha=0.5)
     ax.axvline(x=0, color='k', alpha=0.5)
     plt.xlabel('Current (A)')
@@ -377,26 +384,39 @@ def vectorized_freq_as_curr_fitting():
     min_x = np.min(data['I'])
     max_y = np.max(data['f'])
     plot_vals = np.linspace(min_x, max_x, 1000)
-    fig, ax = plt.subplots()
-    ax.axhline(y=0, color='k', alpha=0.5)
-    ax.axvline(x=0, color='k', alpha=0.5)
-    plt.xlabel('Current (A)')
-    plt.ylabel('Frequency (Hz)')
-    plt.title('Hyperfine energy splitting as a function of Helmholtz coil current')
-    figure2, = ax.plot(data['I'], data['f'], 'o', markerfacecolor="None", color='#050505',
-                       mew=1.4, ms=7, antialiased=True, label='Data')
-    figure3, = ax.plot(plot_vals, vectorized_freq_as_curr(I=plot_vals, P=myoutput.beta), antialiased=True, lw=2.5,
+    fig, ax = plt.subplots(figsize=(7, 4))
+    fig.subplots_adjust(top=0.931,
+                        bottom=0.13,
+                        left=0.096,
+                        right=0.965,
+                        hspace=0.2,
+                        wspace=0.2)
+    # plt.tight_layout()
+    ax.axhline(y=0, color='k', alpha=0.5, lw=1)
+    ax.axvline(x=0, color='k', alpha=0.5, lw=1)
+    plt.xlabel('Current (A)', fontsize=16)
+    plt.ylabel('Frequency (KHz)', fontsize=16)
+    plt.title('Resonant frequency as a function of Helmholtz coil current', fontsize=16)
+    figure2, = ax.plot(data['I'], data['f'] / 1000, '+', markerfacecolor="None", color='#050505',
+                       mew=1.4, ms=15, antialiased=True, label='Data')
+    figure3, = ax.plot(plot_vals, vectorized_freq_as_curr(I=plot_vals, P=myoutput.beta) / 1000, antialiased=True,
+                       lw=2.5,
                        label='ODR Fit', color='k')
-    plt.errorbar(data['I'], data['f'], xerr=data['I_uncert'], yerr=data['f_uncert'], fmt='none', ecolor='#050505',
+    plt.errorbar(data['I'], data['f'] / 1000, xerr=data['I_uncert'], yerr=data['f_uncert'] / 1000, fmt='none',
+                 ecolor='#050505',
                  label=None)
-    Sel = RangeTool(plot_vals, vectorized_freq_as_curr(I=plot_vals, P=myoutput.beta), figure3, ax, 'Thing')
+    # Sel = RangeTool(plot_vals, vectorized_freq_as_curr(I=plot_vals, P=myoutput.beta), figure3, ax, 'Thing')
     plt.xlim((-max_x * 1.15, max_x * 1.15))
-    plt.ylim((0, max_y * 1.15))
-    fullscreen()
-    plt.legend()
+    plt.ylim((0, max_y * 1.15 / 1000))
+    # fullscreen()
+    plt.legend(frameon=True, loc='best')
+    plt.tick_params(axis='both', which='major', labelsize=13)
     plt.savefig("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\VectorizedFreqAsCurr_{}.png".format(
             today), dpi=600)
     plt.show()
+    # MultiPlot(data['I'], data['f'], data['f_uncert'], vectorized_freq_as_curr(I=data['I'], P=myoutput.beta),
+    #           data['I'], data['f'],
+    #           'IvsF', 'Residual plots for current against frequency fit', np.linspace(min_x, max_x, 1000), vectorized_freq_as_curr(I=plot_vals, P=myoutput.beta))
 
 
 def read_scan():
@@ -548,31 +568,40 @@ def bulk_fit():
 def bulk_plot():
     datafolder = filedialog.askopenfilenames(initialdir="C:\\Users\Josh\IdeaProjects\OpticalPumping",
                                              title="Select data for bulk plotting")
+    k = -1
+    FitVals = DataFrame(columns=['Current', 'Sigma', 'Center', 'Amplitude', 'FWHM', 'Height', 'Intercept',
+                                 'Slope', 'ChiSq',
+                                 'RedChiSq', 'Akaike', 'Bayesian'])
+    rdat = DataFrame(columns=['f', 'I', 'f_uncert', 'I_uncert'])
     for filename in datafolder:
         name_ext = filename.split('/')[-1]
-        if 'NO' or 'ODD' in filename:
+        if 'data' in filename:
             run = name_ext.split('_')[1]
+            k += 1
             dat1 = read_csv("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\Sweep_dat\\{}".format(name_ext),
                             names=['f', 'RT'])
             dat1 = dat1[np.abs(dat1['f'] - dat1['f'].mean()) <= (3 * dat1['f'].std())]
             meanfreq = np.mean(dat1['f'])
             fig, ax = plt.subplots(figsize=(14, 6))
-            figure1, = ax.plot(dat1['f'], dat1['RT'], '.', markerfacecolor="None", color='#050505',
+            figure1, = ax.plot(dat1['f'] / 1000, dat1['RT'], '.', markerfacecolor="None", color='#050505',
                                mew=1.4, ms=1, antialiased=True, label='dat1')
             window = int(len(dat1) / 20)
             if window % 2 == 0:
                 window += 1
-            figure2, = ax.plot(dat1['f'], savgol_filter(dat1['RT'], window, 2), lw=2)
+            figure2, = ax.plot(dat1['f'] / 1000, savgol_filter(dat1['RT'], window, 2), lw=2)
             if filename.endswith('.csv'):
                 name = filename[:-4]
-            plt.xlabel('Frequency (Hz)', fontsize=14)
+            # Thing = RangeTool(dat1['f'], dat1['RT'], figure1, ax, name)
+            plt.xlabel('Frequency (KHz)', fontsize=14)
             plt.ylabel('Variance (a.u)', fontsize=14)
-            plt.xlim([np.min(dat1['f']), np.max(dat1['f'])])
+            plt.xlim([np.min(dat1['f']) / 1000, np.max(dat1['f']) / 1000])
             ax.axes.tick_params(labelsize=12)
             plt.title('{}'.format(run))
+            # fullscreen()
             plt.savefig(
-                    "C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\Sweep_plot_{:.3f}kHz_{}.png".format(
-                            meanfreq / 1000, today), dpi=600)
+                    "C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\Sweep_plot_{:.3f}kHz_{}_{}.png".format(
+                            meanfreq / 1000, today, run), dpi=600)
+            # plt.show()
             plt.close()
 
 
@@ -708,7 +737,8 @@ def simple_echo_fits():
     param = efit.make_params()
     param.add('M0', value=maxy, min=maxy * 0.5, max=maxy + (avg_y_sep * 5))
     param.add('T2', value=decay_pos_time, min=decay_pos_time * 0.1, max=decay_pos_time * 2.5)
-    param.add('c', value=miny * 0.3, min=miny * 0.1, max=miny * 2.2)
+    if miny != 0:
+        param.add('c', value=miny * 0.3, min=miny * 0.1, max=miny * 2.2)
     param.add('ph', value=cents[0] * 0.5, min=0, max=cents[0] * 2)
     param.add('m1', value=0.1)
     param.add('m', value=1)
@@ -740,19 +770,153 @@ def simple_echo_fits():
     plt.show()
 
 
+def simple_echo_fits2():
+    """
+    Takes the highest point of each echo and fits the echo_as_T2 function to those points.
+    """
+    datafolder = filedialog.askopenfilenames(initialdir="C:\\Users\Josh\IdeaProjects\OpticalPumping",
+                                             title="Select data for bulk plotting")
+    for filename in datafolder:
+        name_ext = filename.split('/')[-1]
+        name_no_ending = name_ext.split('.csv')[0]
+        dat1 = read_csv("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\Rabi_RDAT\\{}".format(name_ext),
+                        names=['T', 'V'])
+        backup_datV = np.array(dat1['V'])
+        backup_datT = np.array(dat1['T'])
+        try:
+            dat3 = read_csv("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\Sweep_ranges\\{}".format(name_ext),
+                            names=['Lower Bound', 'LowerIndex', 'Upper Bound', 'UpperIndex'])
+        except FileNotFoundError:
+            fig1, ax1 = plt.subplots()
+            plt.title('Pick Ranges for Exponential decay fit')
+            Figure1, = ax1.plot(dat1['T'], dat1['V'])
+            Sel3 = RangeTool(dat1['T'], dat1['V'], Figure1, ax1, name_no_ending)
+            fullscreen()
+            plt.show()
+            dat3 = Sel3.return_range()
+        plt.close()
+        xrange = []
+        yrange = []
+        xranges = {}
+        yranges = {}
+        x_append = xrange.append
+        y_append = yrange.append
+        for o in range(0, len(dat3)):
+            x_append((dat1['T'][dat3['LowerIndex'][o]:dat3['UpperIndex'][o] + 1]).values)
+            y_append((dat1['V'][dat3['LowerIndex'][o]:dat3['UpperIndex'][o] + 1]).values)
+        for o in range(0, len(xrange)):
+            xranges[o] = xrange[o]
+            yranges[o] = yrange[o]
+        xrs = xranges
+        yrs = yranges
+        length = len(yrs)
+        try:
+            max_y = [np.max(yrs[i]) for i in range(length)]
+            max_y_loc = [np.where(yrs[i] == max_y[i])[0][0] for i in range(length)]
+            cents = [xrs[i][max_y_loc[i]] for i in range(length)]
+            min_y = [np.min(yrs[i]) for i in range(length)]
+            min_y_loc = [np.where(yrs[i] == min_y[i])[0][0] for i in range(length)]
+            min_cents = [xrs[i][min_y_loc[i]] for i in range(length)]
+            heights = max_y
+            heights2 = min_y
+            # TODO: Find a better value for the uncertainty on y-values.
+            heights = np.array(heights)
+            cents = np.array(cents)
+            min_cents = np.array(min_cents)
+            maxy = np.max(heights)
+            miny = np.min(heights)
+            heights2 = np.array(heights2)
+            maxy2 = np.max(heights2)
+            avg_y_sep = abs(np.mean(np.diff(heights)))
+            ys = [((heights2[x] + heights2[x + 1]) / 2 if x < len(heights2) - 1 else heights2[x]) for x in range(len(
+                    heights2 - 1))]
+            background_interp = interp1d(x=cents, y=ys, bounds_error=False)
+            dat1['V'] = dat1['V'] - background_interp(dat1['T'])
+            heights = heights - ys
+            maxy = maxy - background_interp(cents[0])
+            efit = Model(echo_as_T2)
+            param = efit.make_params()
+            decay_pos = np.where(heights == find_nearest(heights, maxy / e))[0][0]
+            decay_pos_time = cents[decay_pos]
+            param.add('M0', value=maxy, min=maxy * 0.9, max=maxy + (avg_y_sep * 1.5))
+            param.add('T2', value=decay_pos_time, min=decay_pos_time * 0.1, max=decay_pos_time * 6.5)
+
+            param.add('ph', value=cents[0] * 0.6, min=0, max=cents[0] * 1.3)
+            param.add('c', value=0, min=-5, max=5)
+
+            result_2 = efit.fit(heights, param, t=cents, method='brute', weights=np.mean(np.diff(dat1['T'])) / heights2)
+            print('\n', name_no_ending)
+            print(result_2.fit_report())
+
+            fig3, ax3 = plt.subplots(figsize=(8, 5.5))
+            ax3.set_xlabel('Time (µs)', fontsize=14)
+            ax3.set_ylabel('Voltage (a.u.)', fontsize=14)
+            xes = np.linspace(np.min(cents), np.max(cents), 100)
+            y = efit.eval(t=xes, params=result_2.params)
+            plt.plot(xes, y, antialiased=True)
+            plt.plot(min_cents, ys - background_interp(min_cents))
+            # plt.plot(xes, quadratic(xes, result_2.params['m1'].value, result_2.params['m'].value, result_2.params[
+            #     'c'].value))
+            plt.plot(cents, heights, 'x', ms=8, color='k')
+            plt.plot(dat1['T'], dat1['V'], lw=2, antialiased=True,
+                     color='#4a4a4a', zorder=1)
+            plt.title(filename)
+            plt.xlim(left=0, right=np.max(cents) * 1.1)
+            # plt.ylim(bottom=0, top=result_2.params['M0'].value * 1.1)
+            plt.axhline(result_2.params['M0'].value, color='k', ls='--', alpha=0.7, lw=1, zorder=2)
+            plt.axhline(result_2.params['M0'].value / e, color='k', ls='--', alpha=0.7, lw=1, zorder=2)
+            plt.text(0.9, 0.9, "T_1: {:.4f} us".format(result_2.params['T2'].value), horizontalalignment='center',
+                     verticalalignment="center",
+                     transform=ax3.transAxes,
+                     bbox={'pad': 8, 'fc': 'w'}, fontsize=14)
+            # plt.tight_layout()
+            plt.tick_params(axis='both', which='major', labelsize=13)
+            fullscreen()
+            plt.savefig("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\ExpDecay_{}.png".format(
+                    name_no_ending), dpi=600)
+            plt.show()
+
+            plt.close()
+            dat1.dropna(axis=0, how='any', inplace=True)
+            sample_rate = round(1 / np.mean(np.diff(dat1['T'])), 11)
+            length = len(dat1['T'])
+            fo = fftpack.fft(dat1['V'])
+            freq4 = [x * 10e6 * sample_rate / length for x in np.array(range(0, length))]
+
+            fig5, ax5 = plt.subplots(figsize=(8, 5.5))
+            plt.title('Select region containing peak')
+            figure5, = ax5.plot(freq4[2:100], abs(fo[2:100]))
+            # Sel1 = RangeTool(freq4[2:100], abs(fo[2:100]), figure5, ax5, 'thing')
+            fullscreen()
+            ax5.set_xlabel('Frequency (Hz)', fontsize=14)
+            ax5.set_ylabel('Intensity (a.u.)', fontsize=14)
+            plt.savefig("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\FourierDecay_{}.png".format(
+                    name_no_ending), dpi=600)
+            plt.show()
+            # range2 = Sel1.return_range()
+            bing = np.where(abs(fo[2:100]) == np.max(abs(fo[2:100])))[0][0]
+            print('Maximum frequency: {:.2f}Hz'.format(freq4[2:100][bing]))
+            print('\n \n    ')
+            plt.close()
+
+        except ValueError:
+            print('ValueError in simpleechofits2 at end')
+            continue
+
+
 def fourier_transformer():
     """
     Fourier transforms the combined FID signals of different chemical sites to give a frequency (NMR) spectrum.
     """
     dat, filename = pick_dat(['T', 'V'], 'Sweep_dat', 'Select data to be Fourier Transformed')
-    dat['V'] = savgol_filter(dat['V'], 33, 5)
-    lower_lim = 300
+    dat['V'] = savgol_filter(dat['V'], 73, 1)
+    lower_lim = 10
     upper_lim = 4700
     dat = dat[lower_lim:upper_lim]
     sample_rate = round(1 / np.mean(np.diff(dat['T'])), 11)
     length = len(dat['T'])
     fo = fftpack.fft(dat['V'])
-    freq4 = [x * sample_rate / length for x in np.array(range(0, length))]
+    freq4 = [x * 10e6 * sample_rate / length for x in np.array(range(0, length))]
     halfln = int(length / 2)
     plt.title('{}'.format(filename))
     fig_manager = plt.get_current_fig_manager()
@@ -768,6 +932,42 @@ def fourier_transformer():
     plt.show()
 
 
+def fourier_fit():
+    datafolder = filedialog.askopenfilenames(initialdir="C:\\Users\Josh\IdeaProjects\OpticalPumping",
+                                             title="Select data for bulk plotting")
+    for filename in datafolder:
+        name_ext = filename.split('/')[-1]
+        name_no_ending = name_ext.split('.csv')[0]
+        parts = name_no_ending.split('__')[-2:]
+        parts = "_".join(parts)
+        dat = read_csv("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\Rabi_RDAT\\{}".format(name_ext),
+                       names=['T', 'V'])
+        dat.dropna(axis=0, how='any', inplace=True)
+        fig1, ax1 = plt.subplots()
+        plt.title('{}'.format(filename))
+        Figure1, = ax1.plot(dat['T'], dat['V'])
+        Sel2 = RangeTool(dat['T'], dat['V'], Figure1, ax1, 'thing2')
+        fig_manager = plt.get_current_fig_manager()
+        fig_manager.window.showMaximized()
+        plt.show()
+        ranges = Sel2.return_range()
+        try:
+            dat = dat[ranges.at[0, 'LowerIndex']:ranges.at[0, 'UpperIndex']]
+        except ValueError:
+            dat = dat
+        sample_rate = round(1 / np.mean(np.diff(dat['T'])), 11)
+        length = len(dat['T'])
+        fo = fftpack.fft(dat['V'])
+        freq4 = [x * 10e6 * sample_rate / length for x in np.array(range(0, length))]
+        fig, ax = plt.subplots()
+        plt.title('{} Fourier Transformed'.format(filename))
+        figure, = ax.plot(freq4[2:100], abs(fo[2:100]))
+        Sel = RangeTool(freq4[2:100], abs(fo[2:100]), figure, ax, 'thing')
+        fig_manager = plt.get_current_fig_manager()
+        fig_manager.window.showMaximized()
+        plt.show()
+
+
 # initial = [-2.22e-1, 9.31612e-3, 5.85125e-4, 3.609e+2, -1.0822e+1]
 # bounds = [25, 0, 0, 0, 1e-6, -1, -50, 252], \
 #          [50, 1000, 1000, 1, 1e-4, 0, -1, 452]
@@ -778,25 +978,119 @@ def rabi_fit():
     lower_lim = 140
     upper_lim = 5000
     dat = dat[lower_lim:upper_lim]
-    initial = [0.012, 1 / 1200, -27, -5, 0, -2, 0.01]
-    bounds = [0.009, 1 / 2000, -30, -20, -500, -np.pi, -1], [0.02, 1 / 100, -25, 20, 500, np.pi, 1]
-    popt, pcov = curve_fit(Rabi_3, xdata=dat['T'], p0=initial, bounds=bounds, ydata=dat['V'], maxfev=100000,
-                           method='trf')
-    print(popt)
-    plt.plot(dat['T'], dat['V'])
-    plt.plot(dat['T'], Rabi_3(dat['T'], *popt))
+    # initial = [0.012, 1 / 1200, -27, -5, 0, -2, 0.01]
+    # bounds = [0.009, 1 / 2000, -30, -20, -500, -np.pi, -1], [0.02, 1 / 100, -25, 20, 500, np.pi, 1]
+    # popt, pcov = curve_fit(Rabi_3, xdata=dat['T'], p0=initial, bounds=bounds, ydata=dat['V'], maxfev=100000,
+    #                        method='trf')
+    # print(popt)
+    plt.plot(dat['T'], savgol_filter(dat['V'], 25, 1))
+    # plt.plot(dat['T'], Rabi_3(dat['T'], *popt))
     fullscreen()
     plt.show()
 
 
+def Rabi_1_fit():
+    dat, filename = pick_dat(['T', 'V'], 'Sweep_dat', 'Select data to be Fourier Transformed')
+    lower_lim = 900
+    upper_lim = 5000
+    dat = dat[lower_lim:upper_lim]
+    dat['V'] = savgol_filter(dat['V'], 85, 1)
+    # initial = [0.012, 1 / 1200, -27, -5, 0, -2, 0.01]
+    # bounds = [0.009, 1 / 2000, -30, -20, -500, -np.pi, -1], [0.02, 1 / 100, -25, 20, 500, np.pi, 1]
+    popt, pcov = curve_fit(Rabi_1, xdata=dat['T'], ydata=dat['V'], maxfev=1000000,
+                           method='trf')
+    print(popt)
+    plt.plot(dat['T'], dat['V'])
+    plt.plot(dat['T'], Rabi_1(dat['T'], *popt))
+    fullscreen()
+    plt.show()
+
+
+def Rabi_result():
+    data = read_csv("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\RabiData.csv")
+    # print(data)
+    ticksize = 14
+    labelsize = 15
+    av_data_amp = data.groupby(['Vpp'])['Amp'].agg({'Amp': [lambda x: x.unique().sum() / x.nunique(),
+                                                            np.min, np.max, np.var]}).reset_index()
+    av_data_amp.columns = ['Vpp', 'Amp', 'amin', 'amax', 'var']
+    av_data_amp.fillna(value=0, inplace=True)
+    # print(av_data_amp)
+    plt.errorbar(x=av_data_amp['Vpp'], y=av_data_amp['Amp'], yerr=3 * np.sqrt(av_data_amp['var']),
+                 fmt='none', capsize=3)
+    plt.plot(av_data_amp['Vpp'], av_data_amp['Amp'], 'x', ms=15, mew=1.5)
+    plt.xlabel('RF coil amplitude (Vpp)', fontsize=labelsize)
+    plt.ylabel('Average amplitude (a.u.)', fontsize=labelsize)
+    # fullscreen()
+    plt.tick_params(axis='both', which='major', labelsize=ticksize)
+    plt.title('Calculated maximum amplitude of exponential decay as function of RF amplitude')
+    plt.tight_layout()
+    plt.savefig("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\MaxAmp.png", dpi=600)
+    plt.show()
+
+    av_data_tau = data.groupby(['Vpp'])['Tau'].agg({'Tau': [lambda x: x.unique().sum() / x.nunique(),
+                                                            np.min, np.max, np.var]}).reset_index()
+    av_data_tau.columns = ['Vpp', 'Tau', 'amin', 'amax', 'var']
+    av_data_tau.fillna(value=0, inplace=True)
+    plt.errorbar(x=av_data_tau['Vpp'], y=av_data_tau['Tau'], yerr=3 * np.sqrt(av_data_tau['var']),
+                 fmt='none', capsize=3)
+    plt.plot(av_data_tau['Vpp'], av_data_tau['Tau'], 'x', ms=15, mew=1.5)
+    plt.xlabel('RF coil amplitude (Vpp)', fontsize=labelsize)
+    plt.ylabel('Average tau (us)', fontsize=labelsize)
+    # fullscreen()
+    # print(av_data_tau)
+    plt.tick_params(axis='both', which='major', labelsize=ticksize)
+    plt.title('Decay constant as function of RF amplitude')
+    plt.tight_layout()
+    plt.savefig("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\DecayTime.png", dpi=600)
+    plt.show()
+
+    data_avg = data.groupby(['Vpp'])['CorrFreq'].agg({'CorrFreq': [lambda x: x.unique().sum() / x.nunique(),
+                                                                   np.min, np.max, np.var]}).reset_index()
+    data_avg.columns = ['Vpp', 'CorrFreq', 'amin', 'amax', 'var']
+    data_avg.fillna(value=0, inplace=True)
+    # print(data_avg)
+    # plt.plot(data_avg, 'x', ms=15, mew=1.5)
+    plt.errorbar(x=data_avg['Vpp'], y=data_avg['CorrFreq'], yerr=3 * np.sqrt(data_avg['var']),
+                 fmt='none', capsize=3)
+    plt.plot(data_avg['Vpp'], data_avg['CorrFreq'], 'x', ms=15, mew=1.5)
+    plt.xlabel('RF coil amplitude (Vpp)', fontsize=labelsize)
+    plt.ylabel('Rabi Frequency (Hz)', fontsize=labelsize)
+    # fullscreen()
+    plt.title('Rabi Frequency as function of RF amplitude')
+    plt.tick_params(axis='both', which='major', labelsize=ticksize)
+    plt.tight_layout()
+    plt.savefig("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\RabiFreq.png", dpi=600)
+    plt.show()
+
+    plt.plot(data['Vpp'], data['CorrFreq'], 'x', ms=15, mew=1.5, label='Scale corrected frequency')
+    plt.plot(data['Vpp'], data['Freq'], '+', ms=15, mew=1.5, label='Frequency')
+    plt.xlabel('RF coil amplitude (Vpp)', fontsize=labelsize)
+    plt.ylabel('Rabi Frequency (Hz)', fontsize=labelsize)
+    # fullscreen()
+    plt.legend(fontsize=14)
+    plt.tick_params(axis='both', which='major', labelsize=ticksize)
+    plt.title('Rabi Frequency as function of RF amplitude')
+    plt.tight_layout()
+    plt.savefig("C:\\Users\\Josh\\IdeaProjects\\OpticalPumping\\MatplotlibFigures\\AllRabiFreq.png", dpi=600)
+    plt.show()
+    # print(data)
+
+
+# Rabi_result()
+# pick_ranges()
+# simple_echo_fits2()
+# fourier_fit()
+# bulk_plot()
+# Rabi_1_fit()
 # rabi_fit()
 # fourier_transformer()
-pick_ranges()
-simple_echo_fits()
-# bulk_plot()
+# pick_ranges()
+# simple_echo_fits()
+# bulk_plot('Rabi')
 # error_prop_sympy()
 # bulk_fit()
 # read_scan()
 # fit_gauss(True, cdf=False, residuals=False)
-# vectorized_freq_as_curr_fitting()
+vectorized_freq_as_curr_fitting()
 # freq_as_curr_fitting()

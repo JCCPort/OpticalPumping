@@ -141,3 +141,6 @@ class RangeTool:
             chdir('C:\\Users\Josh\IdeaProjects\OpticalPumping\Sweep_ranges')
         elif event.key == 'escape':
             plt.close()
+
+    def return_range(self):
+        return self.Ranges

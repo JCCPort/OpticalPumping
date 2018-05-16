@@ -60,7 +60,7 @@ def f():
 
 vars, freqs, rawdat, xs = f()
 print(rawdat)
-data = pd.DataFrame(np.transpose([xs, savgol_filter(rawdat, 133, 3)]), columns=['T', 'V'])
+data = pd.DataFrame(np.transpose([xs, savgol_filter(rawdat, 33, 1)]), columns=['T', 'V'])
 # print('Iterations per second:   {}'.format(k / elapsed))
 current = input('What is the current?')
 VPP = input('What is the VPP Amplitude?')
